@@ -127,6 +127,39 @@ export function AppFrame({
     }
   }, [])
 
+  // The mobile software keyboard shrinks the VISUAL viewport, not the layout
+  // viewport the frame's 100% height tracks, so the sticky composer would sit
+  // behind the keys. Measure the covered band on visualViewport resize/scroll
+  // and publish it as --dsh-keyboard-inset, which AppFrame.module.css subtracts
+  // from the frame height. Gated to coarse pointers: on fine pointers a
+  // visualViewport smaller than the layout viewport means pinch zoom, not a
+  // keyboard, and there is no on-screen keyboard to clear. Browsers that
+  // already resize the layout viewport with the keyboard (Gecko on Android)
+  // report inset ~0 and stay untouched.
+  useEffect(() => {
+    const vv = window.visualViewport ?? undefined
+    const el = frameRef.current
+    /* v8 ignore next -- the ref is always attached by effect time: the frame div renders unconditionally. */
+    if (vv === undefined || el === null) return
+    const coarse = window.matchMedia('(pointer: coarse)')
+    const update = () => {
+      const inset = coarse.matches
+        ? Math.max(0, window.innerHeight - (vv.height + vv.offsetTop))
+        : 0
+      el.style.setProperty('--dsh-keyboard-inset', `${inset}px`)
+    }
+    update()
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    coarse.addEventListener('change', update)
+    return () => {
+      vv.removeEventListener('resize', update)
+      vv.removeEventListener('scroll', update)
+      coarse.removeEventListener('change', update)
+      el.style.removeProperty('--dsh-keyboard-inset')
+    }
+  }, [])
+
   // Narrow viewports auto-collapse the sidebar; the store mirror keeps
   // toggleSidebar's semantics right (narrow toggles flip the manual
   // re-expand override, stores.ts). Collapsed is decided here, so the
