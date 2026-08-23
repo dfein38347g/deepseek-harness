@@ -2,7 +2,11 @@
   position: relative; /* anchors the drag handles, which straddle column borders */
   display: grid;
   grid-template-rows: 100%;
-  height: 100%;
+  /* --dsh-keyboard-inset (AppFrame.tsx, visualViewport): the band a mobile
+     software keyboard covers. The layout viewport — this 100%'s basis — does
+     not shrink with the keyboard, so the covered band is given back here and
+     the sticky composer (and every column bottom) lands above the keys. */
+  height: calc(100% - var(--dsh-keyboard-inset, 0px));
   overflow: hidden;
   background: var(--dsw-alias-bg-base);
   /* Collapse/expand animates the tracks on the deepsuite sider curve

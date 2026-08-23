@@ -396,3 +396,105 @@ describe('AppFrame — unmount with an in-flight resize frame', () => {
     expect(tracks(frame)).toEqual([280, 330])
   })
 })
+
+/** Fake visualViewport: the event surface AppFrame subscribes to, plus a fire helper. */
+function stubVisualViewport(initial: { height: number; offsetTop: number }) {
+  const listeners: Record<string, Set<() => void>> = {}
+  const vv = {
+    height: initial.height,
+    offsetTop: initial.offsetTop,
+    addEventListener(type: string, cb: () => void): void { (listeners[type] ??= new Set()).add(cb) },
+    removeEventListener(type: string, cb: () => void): void { listeners[type]?.delete(cb) },
+    fire(type: string): void { listeners[type]?.forEach(cb => cb()) },
+  }
+  vi.stubGlobal('visualViewport', vv)
+  return vv
+}
+
+/** matchMedia stub answering only the frame's (pointer: coarse) query. */
+function stubPointerCoarse(matches: boolean) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(pointer: coarse)' ? matches : false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+    addListener: () => {},
+    removeListener: () => {},
+  }))
+}
+
+describe('AppFrame — mobile keyboard inset', () => {
+  let priorInnerHeight: number
+  beforeEach(() => { priorInnerHeight = window.innerHeight })
+  afterEach(() => { window.innerHeight = priorInnerHeight })
+
+  it('subtracts the covered band from the frame while the keyboard is open', () => {
+    stubPointerCoarse(true)
+    const vv = stubVisualViewport({ height: 500, offsetTop: 0 })
+    window.innerHeight = 844
+    const { frame } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('344px')
+    // Keyboard closes: the visual viewport regains the full height.
+    act(() => { vv.height = 844; vv.fire('resize') })
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+  })
+
+  it('accounts for a shifted visual viewport (offsetTop) when measuring the band', () => {
+    stubPointerCoarse(true)
+    stubVisualViewport({ height: 500, offsetTop: 40 })
+    window.innerHeight = 844
+    const { frame } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('304px')
+  })
+
+  it('never goes negative when the visual viewport exceeds the layout viewport', () => {
+    stubPointerCoarse(true)
+    stubVisualViewport({ height: 900, offsetTop: 0 })
+    window.innerHeight = 844
+    const { frame } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+  })
+
+  it('stays at zero on fine pointers (a smaller visual viewport is pinch zoom, not a keyboard)', () => {
+    stubPointerCoarse(false)
+    stubVisualViewport({ height: 500, offsetTop: 0 })
+    window.innerHeight = 844
+    const { frame } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+  })
+
+  it('drops the inset when the pointer becomes fine while mounted', () => {
+    // The matchMedia change listener re-measures against the new pointer type.
+    let coarseMatches = true
+    const changeListeners = new Set<() => void>()
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      // Live, like a real MediaQueryList: the frame re-reads it on each update.
+      get matches() { return query === '(pointer: coarse)' ? coarseMatches : false },
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, cb: () => void) => { changeListeners.add(cb) },
+      removeEventListener: (_type: string, cb: () => void) => { changeListeners.delete(cb) },
+      dispatchEvent: () => false,
+      addListener: () => {},
+      removeListener: () => {},
+    }))
+    stubVisualViewport({ height: 500, offsetTop: 0 })
+    window.innerHeight = 844
+    const { frame } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('344px')
+    act(() => { coarseMatches = false; changeListeners.forEach(cb => cb()) })
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+  })
+
+  it('removes the inset variable on unmount', () => {
+    stubPointerCoarse(true)
+    stubVisualViewport({ height: 500, offsetTop: 0 })
+    window.innerHeight = 844
+    const { frame, unmount } = mountFrame()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('344px')
+    unmount()
+    expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('')
+  })
+})
