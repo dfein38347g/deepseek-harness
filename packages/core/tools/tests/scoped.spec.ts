@@ -717,3 +717,85 @@ describe('scoped execution dispatch', () => {
     ]))
   })
 })
+
+describe('restrictable own-layer registration', () => {
+  const viewOf = (ctx: Context, key: Agent) =>
+    (ctx.tools as unknown as {
+      view(scope?: unknown): {
+        visible: Map<string, unknown>
+        knownNames: Set<string>
+        restrictableNames: Set<string>
+        known: Map<string, unknown>
+      }
+    }).view(key)
+
+  it('lists a flagged own tool in restrictableNames and lets an allow filter mask it', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('global-a'))
+    ctx.tools.register(tool('global-b'))
+    scope.ctx.tools.register(tool('flagged'), { restrictable: true })
+    scope.ctx.tools.register(tool('plain'))
+
+    const view = viewOf(ctx, key)
+    expect([...view.restrictableNames]).toContain('flagged')
+    expect([...view.restrictableNames]).not.toContain('plain')
+
+    scope.ctx.tools.restrict({ allow: ['global-a', 'flagged'] })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['flagged', 'global-a', 'plain'])
+  })
+
+  it('hides a flagged own tool omitted from the allow list', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('global-a'))
+    scope.ctx.tools.register(tool('flagged'), { restrictable: true })
+
+    scope.ctx.tools.restrict({ allow: ['global-a'] })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['global-a'])
+  })
+
+  it('keeps a flagged own tool visible when its restriction is lifted', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('global-a'))
+    scope.ctx.tools.register(tool('flagged'), { restrictable: true })
+    const dispose = scope.ctx.tools.restrict({ allow: ['global-a'] })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['global-a'])
+    dispose()
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['flagged', 'global-a'])
+  })
+
+  it('still rejects unflagged own names in filters and keeps them visible under any restriction', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('global-a'))
+    scope.ctx.tools.register(tool('plain'))
+    expect(() => scope.ctx.tools.restrict({ allow: ['plain'] })).toThrow(/unknown global tool/)
+    scope.ctx.tools.restrict({ allow: ['global-a'] })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['global-a', 'plain'])
+  })
+
+  it('exposes hidden definitions through view().known without changing visible', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('global-a'))
+    ctx.tools.register(tool('global-b'))
+    scope.ctx.tools.register(tool('flagged'), { restrictable: true })
+    scope.ctx.tools.restrict({ allow: ['global-a'] })
+
+    const view = viewOf(ctx, key)
+    expect([...view.known.keys()].sort()).toEqual(['flagged', 'global-a', 'global-b'])
+    expect(view.known.get('global-b')).toBeDefined()
+    expect([...view.visible.keys()].sort()).toEqual(['global-a'])
+  })
+
+  it('removes the flag on dispose', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    const dispose = scope.ctx.tools.register(tool('flagged'), { restrictable: true })
+    expect([...viewOf(ctx, key).restrictableNames]).toContain('flagged')
+    dispose()
+    expect([...viewOf(ctx, key).restrictableNames]).not.toContain('flagged')
+  })
+})
