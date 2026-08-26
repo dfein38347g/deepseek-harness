@@ -698,6 +698,10 @@ interface ToolView {
   readonly knownNames: ReadonlySet<string>
   /** Current global names that a scoped restriction may name. */
   readonly restrictableNames: ReadonlySet<string>
+  /** Every known definition for this scope (inherited + own, own shadows),
+   *  including ones hidden by restrictions. Presentation consumers use
+   *  `visible`; tool discovery (search) uses `known`. */
+  readonly known: Map<string, ToolDefinition>
 }
 
 /**
@@ -721,6 +725,12 @@ class ToolLayer implements ScopeLayer {
    * "which form does the model see" is a contradiction, not a merge.
    */
   mode: ToolPresentationMode | undefined
+  /**
+   * Own-layer registrations that opted into capability filtering via
+   * `register(definition, { restrictable: true })`. Unflagged own
+   * registrations stay outside the filter (safety default).
+   */
+  readonly restrictable = new Set<string>()
 
   constructor(scope: ScopeKey | undefined) {
     this.tools = new NamedEntries(name => new Error(scope === undefined
@@ -731,7 +741,7 @@ class ToolLayer implements ScopeLayer {
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
     return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
-      && this.mode === undefined
+      && this.mode === undefined && this.restrictable.size === 0
   }
 
   /** Whether every compiled restriction in this layer admits a global tool name. */
@@ -1034,7 +1044,7 @@ export class ToolRuntime extends Service {
    * @param definition - tool schema, execution, and optional finalization/presentation callbacks.
    * @returns the exact disposer that unregisters the tool.
    */
-  register(definition: ToolDefinition): () => void {
+  register(definition: ToolDefinition, options?: { restrictable?: boolean }): () => void {
     const name = definition.name
     const output = (definition as Partial<ToolDefinition>).output
     if (output === undefined || typeof output !== 'object'
@@ -1056,7 +1066,17 @@ export class ToolRuntime extends Service {
     }
     return this.layers.effect(
       this.ctx,
-      layer => layer.tools.insert(name, definition),
+      (layer) => {
+        const undo = layer.tools.insert(name, definition)
+        if (options?.restrictable) {
+          layer.restrictable.add(name)
+          return () => {
+            layer.restrictable.delete(name)
+            undo()
+          }
+        }
+        return undo
+      },
       { label: 'tools.register()' },
     )
   }
@@ -1166,19 +1186,30 @@ export class ToolRuntime extends Service {
     const visible = new Map<string, ToolDefinition>()
     const knownNames = new Set<string>()
     const restrictableNames = new Set<string>()
+    const known = new Map<string, ToolDefinition>()
     for (const [name, definition] of inherited) {
       knownNames.add(name)
       restrictableNames.add(name)
+      known.set(name, definition)
       // Restrictions intersect across the whole chain: any scope on it may
       // mask an inherited name for everything nested inside it.
       if (layers.every(layer => layer.admits(name))) visible.set(name, definition)
     }
-    // The scope's own registrations last, shadowing an inherited name and
-    // outside the filter above.
+    // The scope's own registrations last, shadowing an inherited name.
+    // Flagged entries (register with { restrictable: true }) are treated
+    // like inherited ones: filterable and admitted by the whole chain.
+    // Unflagged entries stay outside the filter (safety default).
     if (own !== undefined) {
       for (const [name, definition] of own.tools.entries()) {
         knownNames.add(name)
-        visible.set(name, definition)
+        known.set(name, definition)
+        if (own.restrictable.has(name)) {
+          restrictableNames.add(name)
+          if (layers.every(layer => layer.admits(name))) visible.set(name, definition)
+          else visible.delete(name)
+        } else {
+          visible.set(name, definition)
+        }
       }
     }
     // Presentation infrastructure is resolved last and outside capability
@@ -1189,7 +1220,7 @@ export class ToolRuntime extends Service {
     if (this.modeFor(scope) !== 'native') {
       visible.set(RUN_CODE_NAME, this.requireCodeTransport())
     }
-    return { visible, knownNames, restrictableNames }
+    return { visible, knownNames, restrictableNames, known }
   }
 
   /**
