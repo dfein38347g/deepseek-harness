@@ -16,7 +16,7 @@
 
 import { assertSupportedJsonSchema } from './json-schema.ts'
 import type { JsonSchemaNode, JsonSchemaScalar } from './json-schema.ts'
-import type { ToolSdkSchema } from './ts-types.ts'
+import { neutralizePromptBraces, type ToolSdkSchema } from './ts-types.ts'
 
 /**
  * The reference grammar's `xid_start xid_continue*` — the set
@@ -219,15 +219,21 @@ const LONE_SURROGATE = /[\ud800-\udfff]/gu
  * their `\uNNNN` escapes (see {@link LONE_SURROGATE}); the escape's own backslash is
  * emitted literally by both consumers, since {@link docLines} doubles it into a
  * Python source escape and a `#` comment carries it verbatim.
+ *
+ * Prompt-variable braces are neutralized the same way the {@link
+ * ./ts-types.ts | ts-types} sibling does ({@link neutralizePromptBraces}):
+ * the generated SDK section renders through the system prompt's strict
+ * interpolator, and a raw `{{ ... }}` in a raw MCP description would make
+ * the whole assembly throw.
  */
 function describe(schema: object): string | undefined {
   const description = (schema as Record<string, unknown>).description
   if (typeof description !== 'string') return undefined
-  const collapsed = description
+  const collapsed = neutralizePromptBraces(description
     .replace(/\s+/g, ' ')
     .replace(UNPRINTABLE, char => `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
     .replace(LONE_SURROGATE, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
-    .trim()
+    .trim())
   return collapsed.length === 0 ? undefined : collapsed
 }
 
