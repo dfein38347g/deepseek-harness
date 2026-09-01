@@ -1169,4 +1169,18 @@ describe('renderToolsSdkPy', () => {
     // regex's `u` flag is what draws that line, so an emoji survives intact.
     expect(renderToolsSdkPy([described('emoji \u{1f600} ok')])).toContain('"""emoji \u{1f600} ok"""')
   })
+
+  it('neutralizes prompt-variable braces, which would stop the system prompt from rendering', () => {
+    // The SDK section passes through the system prompt's strict interpolator:
+    // a raw `{{ ... }}` (a Home Assistant tool warns against exactly this
+    // Jinja form) is a malformed reference, and `{{model}}` would be an
+    // unknown variable — either makes the whole assembly throw. The block
+    // must carry the description with no live braces, at both emission sites.
+    const text = renderToolsSdkPy([described('PREFER NATIVE SOLUTIONS OVER TEMPLATES (read this before writing any `{{ ... }}`)')])
+    expect(text).not.toContain('{{')
+    expect(text).toContain('PREFER NATIVE SOLUTIONS OVER TEMPLATES')
+    const variable = renderToolsSdkPy([described('Renders the {{model}} template body.')])
+    expect(variable).not.toContain('{{')
+    expect(variable).toContain('Renders the')
+  })
 })

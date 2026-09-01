@@ -28,13 +28,32 @@ function pad(indent: number): string {
   return '  '.repeat(indent)
 }
 
-/** A one-line JSDoc block for a schema `description`, or no lines when there is none. */
+/**
+ * Untrusted description text must not reach the system prompt's strict
+ * interpolator as a `{{...}}` group: the generated SDK section renders
+ * through it, and a raw `{{ ... }}` in an MCP description (a Home Assistant
+ * tool warns against exactly this Jinja form) makes the whole assembly
+ * throw. A zero-width space separates the braces of every `{` run — the
+ * visible text is unchanged, and no `{{` sequence can survive, including at
+ * a run boundary where a per-pair rewrite would re-form one.
+ */
+export function neutralizePromptBraces(text: string): string {
+  return text.replace(/\{+/g, run => run.split('').join('\u200B'))
+}
+
+/**
+ * A one-line JSDoc block for a schema `description`, or no lines when there
+ * is none. Escapes comment closers so a description cannot terminate the
+ * generated JSDoc, and neutralizes prompt-variable braces (see
+ * {@link neutralizePromptBraces}).
+ */
 function docLines(description: unknown, indent: number): string[] {
   if (typeof description !== 'string' || description.length === 0) return []
   // Collapse prose to stable one-line docs and escape comment closers so a
   // schema description cannot terminate generated JSDoc.
   const collapsed = description.replace(/\s+/g, ' ').trim()
-  return [`${pad(indent)}/** ${collapsed.replaceAll('*/', String.raw`*\/`)} */`]
+  const safe = neutralizePromptBraces(collapsed).replaceAll('*/', String.raw`*\/`)
+  return [`${pad(indent)}/** ${safe} */`]
 }
 
 /** Render one scalar already validated by the unified schema boundary. */

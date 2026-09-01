@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, CallId  } from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import type { Scope } from '@deepseek-ai/dsh-scope'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { CodeRuntime } from '@deepseek-ai/dsh-code-runtime'
 import type { CodeRunRequest, CodeRunResult } from '@deepseek-ai/dsh-code-runtime'
 import ToolRuntime, { CodeRunFailedError, RUN_CODE_NAME, TOOL_ABORTED_BEFORE_DISPATCH, defineContentToolFixture, defineTool } from '@deepseek-ai/dsh-tools'
@@ -133,6 +133,30 @@ describe('mode-aware wire contribution', () => {
     expect(sdk?.text).toContain('declare const tools: {')
     expect(sdk?.text).toContain('echo: {')
     expect(sdk?.text).not.toContain('run_code:')
+  })
+
+  it("mode 'code' renders the prompt when a tool description carries prompt-variable braces", async () => {
+    // A raw MCP description (a Home Assistant tool warns against Jinja
+    // `{{ ... }}` templates) used to make the system prompt's strict
+    // interpolator throw while rendering the SDK section — the whole turn
+    // died before any model call. The SDK renderer must neutralize the
+    // braces so the assembly renders with the description intact.
+    const { ctx, systemPrompt } = await setup({ mode: 'code' })
+    ctx.tools.register(defineTool({
+      name: 'ha_config_set_automation',
+      description: 'Manage automations. PREFER NATIVE SOLUTIONS OVER TEMPLATES (read this before writing any `{{ ... }}`).',
+      parameters: { trigger: { type: 'string', required: true } },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute: () => Promise.resolve('ok'),
+    }))
+    const assembly = await systemPrompt.assemble()
+    const sdk = assembly.sections.find(section => section.name === 'tools:sdk')
+    expect(sdk?.text).not.toContain('{{')
+    const prompt = renderPrompt(assembly)
+    expect(prompt).toContain('PREFER NATIVE SOLUTIONS OVER TEMPLATES')
   })
 
   it("mode 'code' states the run_code-only rule BEFORE the per-tool guidance that names each tool", async () => {

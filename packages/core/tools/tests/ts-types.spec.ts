@@ -168,4 +168,48 @@ describe('renderToolsSdk', () => {
     expect(text).toContain('interface ToolArgsMap {}')
     expect(text).toContain('interface ToolOutputMap {}')
   })
+
+  it('neutralizes prompt-variable braces in a tool description', () => {
+    // The section text passes through the system prompt's strict
+    // interpolator; a raw MCP description like this one (a Home Assistant
+    // tool warning against Jinja templates) carried a literal `{{ ... }}`
+    // and made the whole assembly throw.
+    const hostile: ToolSdkSchema = {
+      name: 'ha_config_set_automation',
+      description: 'Manage automations. PREFER NATIVE SOLUTIONS OVER TEMPLATES (read this before writing any `{{ ... }}`).',
+      parameters: parameterSchemaSpecToJsonSchema({}) as unknown as Record<string, unknown>,
+      output: { type: 'string' },
+    }
+    const text = renderToolsSdk([hostile])
+    expect(text).not.toContain('{{')
+    expect(text).toContain('PREFER NATIVE SOLUTIONS OVER TEMPLATES')
+  })
+
+  it('neutralizes braces that look like a registered variable reference', () => {
+    // `{{model}}` matches the variable-name rule, so without neutralization
+    // the interpolator rejects it as an unknown variable.
+    const tool: ToolSdkSchema = {
+      name: 'render',
+      description: 'Renders the {{model}} template body.',
+      parameters: parameterSchemaSpecToJsonSchema({}) as unknown as Record<string, unknown>,
+      output: { type: 'string' },
+    }
+    const text = renderToolsSdk([tool])
+    expect(text).not.toContain('{{')
+    expect(text).toContain('Renders the')
+  })
+
+  it('neutralizes prompt-variable braces in a property description', () => {
+    const tool: ToolSdkSchema = {
+      name: 'ha_config',
+      description: 'Manage automations.',
+      parameters: parameterSchemaSpecToJsonSchema({
+        template: { type: 'string', required: true, description: 'A Jinja `{{ trigger }}` template.' },
+      }) as unknown as Record<string, unknown>,
+      output: { type: 'string' },
+    }
+    const text = renderToolsSdk([tool])
+    expect(text).not.toContain('{{')
+    expect(text).toContain('A Jinja')
+  })
 })
