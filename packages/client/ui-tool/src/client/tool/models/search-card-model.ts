@@ -21,8 +21,32 @@
  * lost.
  * @module
  */
-import type { SearchBlockProps, SearchFileGroup } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SearchBlockLabels, SearchBlockProps, SearchFileGroup } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ToolCallBlock } from './tool-call-model.ts'
+
+/**
+ * Build the SearchBlock display copy from the conversation locale seat —
+ * the one place the primitive's label surface pairs with this package's
+ * dictionary, shared by every search render site (chat row, details panel).
+ * @param t - the render site's conversation locale seat.
+ * @returns the full label set for {@link SearchBlockProps}'s `labels`.
+ */
+export function searchBlockLabels(t: TranslateNS<'conversation'>): SearchBlockLabels {
+  return {
+    matches: (shown, files) => t('search.matches', { shown, files }),
+    matchesCapped: (shown, total, files) => t('search.matches.capped', { shown, total, files }),
+    paths: shown => t('search.paths', { shown }),
+    pathsCapped: (shown, total) => t('search.paths.capped', { shown, total }),
+    empty: t('search.empty'),
+    copy: t('copy'),
+    copied: t('copied'),
+    collapseAria: t('search.collapseAria'),
+    collapse: t('collapse'),
+    expandAria: hidden => t('search.expandAria', { n: hidden }),
+    expand: hidden => t('search.expandRest', { n: hidden }),
+  }
+}
 
 /**
  * Distributive `Omit`: a plain `Omit<A | B, K>` keeps only the keys common to
