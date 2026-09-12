@@ -12,6 +12,7 @@
  * request fence and the page-authority classification so both sides normalize
  * identically.
  * @param authority - a Host-header value or a page authority (`hostname` plus any non-default port).
+ * @returns the normalized authority URL, or undefined when unparsable.
  */
 export function parseAuthority(authority: string): URL | undefined {
   try {
@@ -28,6 +29,9 @@ export function parseAuthority(authority: string): URL | undefined {
  * schemes (their default ports differ, so `:80` and `:443` still count as
  * explicit), never from the raw string, where WHATWG trimming would misread
  * shapes like `host:port ` as port-less.
+ * @param entry - the configured authority string, verbatim.
+ * @param entryUrl - the result of parsing `entry`.
+ * @returns the authority in canonical `host` or `host:port` form.
  */
 export function canonicalAuthority(entry: string, entryUrl: URL): string {
   // An authority that parsed under http cannot fail under https.
@@ -47,6 +51,7 @@ export function canonicalAuthority(entry: string, entryUrl: URL): string {
  * own requests are trusted by the fence.
  * @param hostUrl - the normalized request or page authority.
  * @param trustedHosts - the deployment's declared non-loopback authorities.
+ * @returns true when the authority matches one of the entries.
  */
 export function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): boolean {
   return trustedHosts.some((entry) => {
