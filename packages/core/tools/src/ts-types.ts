@@ -36,6 +36,8 @@ function pad(indent: number): string {
  * throw. A zero-width space separates the braces of every `{` run — the
  * visible text is unchanged, and no `{{` sequence can survive, including at
  * a run boundary where a per-pair rewrite would re-form one.
+ * @param text - the raw untrusted text rendered into the generated SDK section.
+ * @returns the same text with every brace run broken by zero-width spaces, so no `{{` sequence survives.
  */
 export function neutralizePromptBraces(text: string): string {
   return text.replace(/\{+/g, run => run.split('').join('\u200B'))

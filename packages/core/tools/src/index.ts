@@ -1032,6 +1032,7 @@ export class ToolRuntime extends Service {
    * Register globally or in the calling agent scope. Scoped tools shadow
    * globals; duplicates within one layer and the reserved `run_code` name fail.
    * @param definition - tool schema, execution, and optional finalization/presentation callbacks.
+   * @param options - registration options; `restrictable` marks the tool eligible for a deployment-configured restriction gate.
    * @returns the exact disposer that unregisters the tool.
    */
   register(definition: ToolDefinition, options?: { restrictable?: boolean }): () => void {

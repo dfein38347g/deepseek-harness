@@ -15,7 +15,7 @@ import {
 } from '../src/client/index.ts'
 
 type Win = {
-  location?: { hostname: string; search: string; origin?: string }
+  location?: { hostname: string; search: string; port?: string; origin?: string }
   __DSH_TRANSPORT__?: ClientTransportHooks
 }
 
@@ -138,6 +138,36 @@ describe('connection client apply', () => {
 
   it('reports non-loopback page authority through the connection handle', async () => {
     ;(globalThis as Win).location = { hostname: '192.0.2.20', search: '' }
+    expect((await mount()).isLoopback).toBe(false)
+  })
+
+  it('classifies a page served from a declared trusted host as the privileged surface', async () => {
+    vi.stubGlobal('__DSH_TRUSTED_HOSTS__', ['harness.example'])
+    ;(globalThis as Win).location = { hostname: 'harness.example', search: '' }
+    expect((await mount()).isLoopback).toBe(true)
+  })
+
+  it('matches an explicit port on a declared host:port authority', async () => {
+    vi.stubGlobal('__DSH_TRUSTED_HOSTS__', ['harness.example:3080'])
+    ;(globalThis as Win).location = { hostname: 'harness.example', port: '3080', search: '' }
+    expect((await mount()).isLoopback).toBe(true)
+  })
+
+  it('refuses a page port the declared host:port authority does not cover', async () => {
+    vi.stubGlobal('__DSH_TRUSTED_HOSTS__', ['harness.example:3080'])
+    ;(globalThis as Win).location = { hostname: 'harness.example', port: '8080', search: '' }
+    expect((await mount()).isLoopback).toBe(false)
+  })
+
+  it('refuses a default-port page against an explicit host:port authority', async () => {
+    vi.stubGlobal('__DSH_TRUSTED_HOSTS__', ['harness.example:3080'])
+    ;(globalThis as Win).location = { hostname: 'harness.example', search: '' }
+    expect((await mount()).isLoopback).toBe(false)
+  })
+
+  it('fails closed when the trusted-hosts page global is not an array of strings', async () => {
+    vi.stubGlobal('__DSH_TRUSTED_HOSTS__', { host: 'harness.example' })
+    ;(globalThis as Win).location = { hostname: 'harness.example', search: '' }
     expect((await mount()).isLoopback).toBe(false)
   })
 

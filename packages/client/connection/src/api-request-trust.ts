@@ -14,22 +14,13 @@
  */
 
 import { isLoopbackHostname } from './loopback-hostname.ts'
+import { canonicalAuthority, isTrustedAuthority, parseAuthority } from './authority.ts'
 import type { ConnectionTrustRequest } from './rpc.ts'
 
 function header(headers: ConnectionTrustRequest['headers'], name: string): string | undefined {
   if (headers instanceof Headers) return headers.get(name) ?? undefined
   const value = headers[name]
   return typeof value === 'string' ? value : undefined
-}
-
-/** Normalized URL of a Host-header authority (hostname lowercased, default port stripped, IPv6 bracketed), or undefined when unparsable. */
-function parseAuthority(authority: string): URL | undefined {
-  try {
-    // http: is a WHATWG "special scheme": parsing yields a non-empty hostname or throws.
-    return new URL(`http://${authority}`)
-  } catch {
-    return undefined
-  }
 }
 
 /**
@@ -50,36 +41,6 @@ export function assertTrustedAuthority(entry: string): void {
   const entryUrl = parseAuthority(entry)
   if (entryUrl !== undefined && canonicalAuthority(entry, entryUrl) === entry.toLowerCase()) return
   throw new Error(`client-connection: trustedHosts entry ${JSON.stringify(entry)} is not a bare host[:port] authority`)
-}
-
-/**
- * Canonical form of a parsed authority: `hostname` when no port was written,
- * else `hostname:port`. The port is judged from URL parses under both special
- * schemes (their default ports differ, so `:80` and `:443` still count as
- * explicit), never from the raw string, where WHATWG trimming would misread
- * shapes like `host:port ` as port-less.
- */
-function canonicalAuthority(entry: string, entryUrl: URL): string {
-  // An authority that parsed under http cannot fail under https.
-  const port = entryUrl.port !== '' ? entryUrl.port : new URL(`https://${entry}`).port
-  return port === '' ? entryUrl.hostname : `${entryUrl.hostname}:${port}`
-}
-
-/**
- * Whether the request authority matches a `trustedHosts` entry. An entry with
- * an explicit port matches that exact authority; a port-less entry matches the
- * hostname on any port (the shape the CLI derives for IP-literal LAN serving,
- * where the bound port may be OS-assigned). Both sides compare through WHATWG
- * normalization, so case and a redundant `:80` never decide trust.
- */
-function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): boolean {
-  return trustedHosts.some((entry) => {
-    const entryUrl = parseAuthority(entry)
-    if (entryUrl === undefined) return false
-    return canonicalAuthority(entry, entryUrl) === entryUrl.hostname
-      ? entryUrl.hostname === hostUrl.hostname
-      : entryUrl.host === hostUrl.host
-  })
 }
 
 /**

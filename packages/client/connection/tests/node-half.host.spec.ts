@@ -132,16 +132,32 @@ describe('connection node half', () => {
     try {
       const rows: IndexInjection[] = []
       ctx.emit('webserver/index-inject', rows)
-      expect(rows).toEqual([{
-        kind: 'global', name: '__DSH_CONNECTION_RECOVERY__', value: {
-          backoffBaseMs: 500, backoffFactor: 2, backoffMaxMs: 10_000,
-          generationReadyWarnMs: 3_000, generationReadyTimeoutMs: 25_000,
+      expect(rows).toEqual([
+        {
+          kind: 'global', name: '__DSH_CONNECTION_RECOVERY__', value: {
+            backoffBaseMs: 500, backoffFactor: 2, backoffMaxMs: 10_000,
+            generationReadyWarnMs: 3_000, generationReadyTimeoutMs: 25_000,
+          },
         },
-      }])
+        { kind: 'global', name: '__DSH_TRUSTED_HOSTS__', value: [] },
+      ])
       await dispose()
       const after: IndexInjection[] = []
       ctx.emit('webserver/index-inject', after)
       expect(after).toEqual([])
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('injects the declared trusted hosts into every served page', async () => {
+    const { ctx, dispose } = await mounted({ trustedHosts: ['harness.example:3080', '192.168.1.5'] })
+    try {
+      const rows: IndexInjection[] = []
+      ctx.emit('webserver/index-inject', rows)
+      expect(rows).toContainEqual({
+        kind: 'global', name: '__DSH_TRUSTED_HOSTS__', value: ['harness.example:3080', '192.168.1.5'],
+      })
     } finally {
       await dispose()
     }

@@ -8,6 +8,7 @@
   "files": [
     "src/api-path.ts",
     "src/api-request-trust.ts",
+    "src/authority.ts",
     "src/browser-auth.ts",
     "src/http-bridge.ts",
     "src/index.ts",

@@ -11,6 +11,7 @@ import {
 import { createFixtureConnectionRpc } from './fixture.ts'
 import { createWebConnectionRpc, type RpcFetch, type RpcStreamOpen } from './rpc.ts'
 import { isLoopbackHostname } from '../loopback-hostname.ts'
+import { isTrustedAuthority, parseAuthority } from '../authority.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
 import { resolveConnectionConfig } from '../recovery-config.ts'
 
@@ -109,6 +110,14 @@ export interface ClientTransportHooks {
 interface ClientTransportGlobal {
   __DSH_TRANSPORT__?: ClientTransportHooks
   __DSH_CONNECTION_RECOVERY__?: unknown
+  /**
+   * Deployment-declared authorities the Host's /api trust fence accepts
+   * beyond loopback, injected into every served page by the Host half of
+   * this plugin. The page's own authority is classified against this list
+   * ({@link trustedPageHosts}), fail-closed when the global is absent or
+   * malformed.
+   */
+  __DSH_TRUSTED_HOSTS__?: unknown
 }
 
 /**
@@ -118,8 +127,11 @@ interface ClientTransportGlobal {
 export interface ConnectionHandle {
   /**
    * Whether the privileged surface is reachable: the page authority is
-   * loopback, the transport declares the page owns the Host
-   * ({@link ClientTransportHooks.ownsHost}), or the context is not a browser.
+   * loopback, a deployment-declared trusted authority the Host's /api trust
+   * fence also accepts (the `trustedHosts` list, injected into the page as
+   * the `__DSH_TRUSTED_HOSTS__` global), the transport declares the page owns
+   * the Host ({@link ClientTransportHooks.ownsHost}), or the context is not a
+   * browser.
    */
   readonly isLoopback: boolean
   /** Current Remote event generation and the Host facts carried by its opening frame. */
@@ -182,6 +194,28 @@ function watchBrowserNetwork(controller: ConnectionController): () => void {
 }
 
 /**
+ * The deployment-declared authorities from the page bootstrap, fail-closed:
+ * anything that is not an array of strings degrades to the empty list, which
+ * narrows the privileged surface to loopback exactly as before. Entries that
+ * fail to parse never match; the Host already rejected them at plugin load.
+ */
+function trustedPageHosts(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
+/**
+ * The page's own authority as the Host header its fetches carry: the
+ * hostname plus any non-default port (a default-port page omits the port,
+ * exactly as on the wire), normalized through the same WHATWG parse the
+ * request fence applies to that header.
+ */
+function pageAuthority(pageLocation: { readonly hostname: string; readonly port?: string }): URL | undefined {
+  const port = typeof pageLocation.port === 'string' && pageLocation.port !== '' ? `:${pageLocation.port}` : ''
+  return parseAuthority(`${pageLocation.hostname}${port}`)
+}
+
+/**
  * Client plugin body: pick physical carriers by page mode and provide ctx.connection.
  * @param ctx - client cordis context.
  */
@@ -191,6 +225,13 @@ export function apply(ctx: Context): void {
   const fixtureRpc = fixture ? createFixtureConnectionRpc() : undefined
   const transport = (globalThis as ClientTransportGlobal).__DSH_TRANSPORT__
   const recovery = resolveConnectionConfig((globalThis as ClientTransportGlobal).__DSH_CONNECTION_RECOVERY__)
+  // Page-side mirror of the Host fence's Host decision: this page's own
+  // authority is trusted when the fence would accept this page's requests,
+  // so a served page's privileged surface tracks the deployment's declared
+  // origins instead of loopback hostnames alone.
+  const trustedHosts = trustedPageHosts((globalThis as ClientTransportGlobal).__DSH_TRUSTED_HOSTS__)
+  const pageHostUrl = pageLocation !== undefined ? pageAuthority(pageLocation) : undefined
+  const trustedPage = pageHostUrl !== undefined && isTrustedAuthority(pageHostUrl, trustedHosts)
   const rpc = fixtureRpc ?? transport?.rpc ?? createWebConnectionRpc(transport?.fetch, transport?.openStream)
   let generationSource: ConnectionGenerationSource | undefined
   let owner: ConnectionOwner | undefined
@@ -230,7 +271,10 @@ export function apply(ctx: Context): void {
     publishState(undefined)
   }
   const handle: ConnectionHandle = {
-    isLoopback: transport?.ownsHost === true || pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
+    isLoopback: transport?.ownsHost === true
+      || pageLocation === undefined
+      || isLoopbackHostname(pageLocation.hostname)
+      || trustedPage,
     generation: {
       getSnapshot: () => generation,
       subscribe: (listener) => {
