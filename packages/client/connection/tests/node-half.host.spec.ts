@@ -1,5 +1,8 @@
 /** Node half: registers the /api prefix route bridging to the api gateway. */
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
@@ -292,6 +295,68 @@ describe('connection node half', () => {
       cookie: browserCookie(connection, 'harness.example'),
     }))).toBeUndefined()
     await dispose()
+  })
+
+  it('accepts the bound HTTP Basic credential on /api without any prior cookie, fence first', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-basic-auth-'))
+    const file = join(dir, 'basic-auth')
+    writeFileSync(file, 'dsh-user:correct horse\n')
+    try {
+      const { routes, connection, dispose } = await mounted({
+        trustedHosts: ['harness.example:3080'],
+        basicAuthFile: file,
+      })
+      const valid = 'Basic ' + Buffer.from('dsh-user:correct horse').toString('base64')
+      const wrong = 'Basic ' + Buffer.from('dsh-user:wrong password').toString('base64')
+
+      expect(connection.requestRejection(fakeRequest({ host: 'harness.example:3080' }))).toBe(401)
+      expect(connection.requestRejection(fakeRequest({
+        host: 'harness.example:3080',
+        authorization: wrong,
+      }))).toBe(401)
+      expect(connection.requestRejection(fakeRequest({
+        host: 'harness.example:3080',
+        authorization: valid,
+      }))).toBeUndefined()
+      // The Host/Origin fence still precedes the credential check.
+      expect(connection.requestRejection(fakeRequest({
+        host: 'evil.example:3080',
+        authorization: valid,
+      }))).toBe(403)
+
+      const denied = fakeResponse()
+      await routes[0]!.handler(fakeRequest({ host: 'harness.example:3080' }), denied.response)
+      expect(denied.state).toMatchObject({ status: 401, body: 'unauthorized' })
+      const allowed = fakeResponse()
+      await routes[0]!.handler(fakeRequest({
+        host: 'harness.example:3080',
+        authorization: valid,
+      }), allowed.response)
+      expect(allowed.state.status).toBe(404)
+      await dispose()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails load loudly on a missing or malformed basic-auth file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-basic-auth-'))
+    try {
+      await expect(mounted({ basicAuthFile: join(dir, 'absent') }))
+        .rejects.toThrow(/cannot read basic-auth file/u)
+
+      const multi = join(dir, 'multi')
+      writeFileSync(multi, 'dsh-user:one\ntwo\n')
+      await expect(mounted({ basicAuthFile: multi })).rejects.toThrow(/exactly one line/u)
+
+      for (const line of ['no-colon', ':no-user', 'user:']) {
+        const target = join(dir, `bad-${Buffer.from(line).toString('base64url')}`)
+        writeFileSync(target, `${line}\n`)
+        await expect(mounted({ basicAuthFile: target })).rejects.toThrow(/"user:password"/u)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('provides a disposable dedicated RPC channel', async () => {

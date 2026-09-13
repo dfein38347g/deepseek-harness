@@ -3,7 +3,7 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
-import { BrowserAuth } from '../src/browser-auth.ts'
+import { BrowserAuth, type BasicAuthCredential } from '../src/browser-auth.ts'
 import type { ConnectionIndexRequest, ConnectionIndexResponse } from '../src/rpc.ts'
 import { RecordCredentials } from './browser-credentials.ts'
 
@@ -55,13 +55,15 @@ function createAuth(
   store: RecordCredentials,
   maxAgeDays = 30,
   processOwner: object = {},
+  basicAuth?: BasicAuthCredential,
 ): Promise<BrowserAuth> {
-  return BrowserAuth.create(processOwner, credentials(store), maxAgeDays)
+  return BrowserAuth.create(processOwner, credentials(store), maxAgeDays, basicAuth)
 }
 
 function request(url: string, authority = '127.0.0.1:3080', init?: {
   cookie?: string
   method?: string
+  auth?: string
 }): ConnectionIndexRequest {
   return {
     method: init?.method ?? 'GET',
@@ -69,8 +71,13 @@ function request(url: string, authority = '127.0.0.1:3080', init?: {
     headers: {
       host: authority,
       ...init?.cookie === undefined ? {} : { cookie: init.cookie },
+      ...init?.auth === undefined ? {} : { authorization: init.auth },
     },
   }
+}
+
+function basicAuthorization(user: string, password: string): string {
+  return 'Basic ' + Buffer.from(`${user}:${password}`, 'utf8').toString('base64')
 }
 
 function exchange(
@@ -246,5 +253,101 @@ describe('BrowserAuth', () => {
 
     await expect(createAuth(new RecordCredentials(), Number.MAX_SAFE_INTEGER))
       .rejects.toThrow(/safe timestamp range/u)
+  })
+
+  describe('with a bound HTTP Basic credential', () => {
+    const credential: BasicAuthCredential = { user: 'dsh-user', password: 'correct horse' }
+
+    it('verifies the header in constant time and never passes without a bound credential', async () => {
+      const auth = await createAuth(new RecordCredentials(), 30, {}, credential)
+      expect(auth.isBasicAuthorized(request('/', '127.0.0.1:3080', {
+        auth: basicAuthorization('dsh-user', 'correct horse'),
+      }))).toBe(true)
+      expect(auth.isBasicAuthorized({
+        headers: new Headers({ host: '127.0.0.1:3080', authorization: basicAuthorization(
+          'dsh-user',
+          'wrong password',
+        ) }),
+      })).toBe(false)
+      expect(auth.isBasicAuthorized(request('/', '127.0.0.1:3080', {
+        auth: basicAuthorization('other-user', 'correct horse'),
+      }))).toBe(false)
+      expect(auth.isBasicAuthorized(request('/', '127.0.0.1:3080', {
+        auth: 'Bearer ' + Buffer.from('dsh-user:correct horse').toString('base64'),
+      }))).toBe(false)
+      expect(auth.isBasicAuthorized(request('/', '127.0.0.1:3080', { auth: 'Basic !!!' }))).toBe(false)
+      expect(auth.isBasicAuthorized(request('/', '127.0.0.1:3080'))).toBe(false)
+
+      const unbound = await createAuth(new RecordCredentials(), 30, {})
+      expect(unbound.isBasicAuthorized(request('/', '127.0.0.1:3080', {
+        auth: basicAuthorization('dsh-user', 'correct horse'),
+      }))).toBe(false)
+    })
+
+    it('mints the session cookie on the first successful index exchange and serves on the cookie after', async () => {
+      const setCookiePattern = new RegExp(
+        '^dsh-auth-.+=v1\\..*; Max-Age=2592000; Path=/; Expires=.*; HttpOnly; SameSite=Strict$',
+      )
+      const auth = await createAuth(new RecordCredentials(), 30, {}, credential)
+      const first = response()
+      expect(auth.authorizeIndex(request('/', '127.0.0.1:3080', {
+        auth: basicAuthorization('dsh-user', 'correct horse'),
+      }), first.value)).toBe(false)
+      expect(first.state.status).toBe(303)
+      expect(first.state.headers?.['location']).toBe('/')
+      const setCookie = first.state.headers?.['set-cookie']
+      expect(setCookie).toMatch(setCookiePattern)
+      if (setCookie === undefined) throw new Error('basic exchange did not set a cookie')
+      const cookie = setCookie.split(';', 1)[0]!
+
+      const byCookie = response()
+      expect(auth.authorizeIndex(request('/', '127.0.0.1:3080', { cookie }), byCookie.value)).toBe(true)
+      expect(byCookie.state).toEqual({})
+
+      const withBoth = response()
+      expect(auth.authorizeIndex(request('/', '127.0.0.1:3080', {
+        cookie,
+        auth: basicAuthorization('dsh-user', 'correct horse'),
+      }), withBoth.value)).toBe(true)
+      expect(withBoth.state).toEqual({})
+    })
+
+    it('serves a non-root path directly on a valid credential without redirecting', async () => {
+      const auth = await createAuth(new RecordCredentials(), 30, {}, credential)
+      const direct = response()
+      expect(auth.authorizeIndex(request('/index.html', '127.0.0.1:3080', {
+        auth: basicAuthorization('dsh-user', 'correct horse'),
+      }), direct.value)).toBe(true)
+      expect(direct.state).toEqual({})
+    })
+
+    it('challenges on 401 with WWW-Authenticate only when a credential is bound', async () => {
+      const bound = await createAuth(new RecordCredentials(), 30, {}, credential)
+      const denied = response()
+      expect(bound.authorizeIndex(request('/', '127.0.0.1:3080'), denied.value)).toBe(false)
+      expect(denied.state.status).toBe(401)
+      expect(denied.state.headers).toEqual({
+        'cache-control': 'no-store',
+        'content-type': 'text/plain; charset=utf-8',
+        'www-authenticate': 'Basic realm="dsh web", charset="UTF-8"',
+      })
+      expect(denied.state.body).toBe('dsh web basic authentication required (Authorization: Basic)\n')
+
+      const wrong = response()
+      expect(bound.authorizeIndex(request('/', '127.0.0.1:3080', {
+        auth: basicAuthorization('dsh-user', 'nope'),
+      }), wrong.value)).toBe(false)
+      expect(wrong.state.status).toBe(401)
+      expect(wrong.state.headers?.['www-authenticate']).toBe('Basic realm="dsh web", charset="UTF-8"')
+
+      const unbound = await createAuth(new RecordCredentials(), 30, {})
+      const plain = response()
+      expect(unbound.authorizeIndex(request('/', '127.0.0.1:3080'), plain.value)).toBe(false)
+      expect(plain.state.status).toBe(401)
+      expect(plain.state.headers).toEqual({
+        'cache-control': 'no-store',
+        'content-type': 'text/plain; charset=utf-8',
+      })
+    })
   })
 })

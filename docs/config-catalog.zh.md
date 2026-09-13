@@ -359,8 +359,23 @@ export interface ConnectionConfig {
    * non-loopback (`0.0.0.0`) deployment must declare the names it is reached
    * by; the Web runtime derives LAN IP literals from an active all-interface
    * bind. An entry that is not a bare, canonical authority fails plugin load.
+   * The same list is injected into every served page as the
+   * `__DSH_TRUSTED_HOSTS__` global, so the browser's own page classification
+   * (the `connection` handle's privileged-surface flag) mirrors this fence
+   * instead of testing loopback hostnames only.
    */
   trustedHosts?: string[]
+  /**
+   * Path of a mode-600 file holding one `user:password` line. When set, the
+   * browser surface additionally accepts that HTTP Basic credential on every
+   * request (index, `/api`, WebSocket handshakes), and the first successful
+   * index exchange mints the ordinary signed session cookie; a 401 then
+   * carries `WWW-Authenticate: Basic` so any browser can prompt for it.
+   * The one-time launch-token URL stays available as a local recovery path.
+   * Unset (the default) keeps the token-and-cookie-only flow. A missing or
+   * malformed file fails plugin load.
+   */
+  basicAuthFile?: string
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */

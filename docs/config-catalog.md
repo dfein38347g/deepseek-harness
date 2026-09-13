@@ -363,6 +363,17 @@ export interface ConnectionConfig {
    * instead of testing loopback hostnames only.
    */
   trustedHosts?: string[]
+  /**
+   * Path of a mode-600 file holding one `user:password` line. When set, the
+   * browser surface additionally accepts that HTTP Basic credential on every
+   * request (index, `/api`, WebSocket handshakes), and the first successful
+   * index exchange mints the ordinary signed session cookie; a 401 then
+   * carries `WWW-Authenticate: Basic` so any browser can prompt for it.
+   * The one-time launch-token URL stays available as a local recovery path.
+   * Unset (the default) keeps the token-and-cookie-only flow. A missing or
+   * malformed file fails plugin load.
+   */
+  basicAuthFile?: string
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -387,7 +398,7 @@ export interface ConnectionRecoveryConfig {
 }
 ```
 
-Source: [`packages/client/connection/src/index.ts:72`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:74`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 

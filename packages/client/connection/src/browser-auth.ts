@@ -49,6 +49,26 @@ function decodeBase64Url(value: string): Buffer | undefined {
   return encodeBase64Url(decoded) === value ? decoded : undefined
 }
 
+/**
+ * The HTTP Basic credential a deployment may bind to the browser surface.
+ * When present, any request carrying a matching `Authorization: Basic`
+ * header authenticates, and the first index exchange mints the ordinary
+ * signed session cookie.
+ */
+export interface BasicAuthCredential {
+  /** The user name the `Authorization` header must carry. */
+  readonly user: string
+  /** The password compared in constant time against the header. */
+  readonly password: string
+}
+
+/** Standard base64 (RFC 4648 §4) decode with a round-trip check, or undefined. */
+function decodeBase64(value: string): Buffer | undefined {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length === 0 || value.length % 4 === 1) return undefined
+  const decoded = Buffer.from(value, 'base64')
+  return decoded.toString('base64') === value ? decoded : undefined
+}
+
 function processLaunchToken(owner: object): string {
   const existing = PROCESS_LAUNCH_TOKENS.get(owner)
   if (existing !== undefined) return existing
@@ -185,12 +205,15 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 export class BrowserAuth {
   private readonly launchToken: string
   private readonly maxAgeMilliseconds: number
+  private readonly basicAuth: BasicAuthCredential | undefined
 
   private constructor(
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    basicAuth?: BasicAuthCredential,
   ) {
+    this.basicAuth = basicAuth
     this.launchToken = processLaunchToken(processOwner)
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
@@ -205,14 +228,17 @@ export class BrowserAuth {
    * @param processOwner - root application context retaining one token across Connection reloads.
    * @param credentials - persistent credential provider for the Web profile.
    * @param maxAgeDays - positive absolute browser-cookie lifetime in days.
+   * @param basicAuth - optional credential that opens the surface to any client via
+   *   standard HTTP Basic authentication.
    * @returns initialized authentication owner with the process owner's launch token.
    */
   static async create(
     processOwner: object,
     credentials: CredentialProvider,
     maxAgeDays: number,
+    basicAuth?: BasicAuthCredential,
   ): Promise<BrowserAuth> {
-    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays)
+    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays, basicAuth)
   }
 
   /**
@@ -230,9 +256,10 @@ export class BrowserAuth {
   }
 
   /**
-   * Authenticate an index request. A valid root query token mints the cookie
-   * and redirects to clean `/`; a valid cookie lets the caller serve the
-   * index; every other request receives the same minimal 401 response.
+   * Authenticate an index request. A valid root query token or a valid bound
+   * HTTP Basic credential mints the session cookie and redirects to clean `/`;
+   * a valid cookie lets the caller serve the index; every other request
+   * receives the minimal 401 response.
    * @param req - incoming root or configured-index request.
    * @param res - response owned when this method returns false.
    * @returns true only when the caller may serve index.html.
@@ -245,23 +272,7 @@ export class BrowserAuth {
       const authority = requestAuthority(req.headers)
       if (req.method === 'GET' && url.pathname === '/' && tokens.length === 1
         && authority !== undefined && tokenMatches(tokens.join(''), this.launchToken)) {
-        const issuedAt = Date.now()
-        const expiresAt = issuedAt + this.maxAgeMilliseconds
-        const value = encodeCookie({
-          version: COOKIE_PAYLOAD_VERSION,
-          authority,
-          issuedAt,
-          expiresAt,
-        }, this.secret)
-        res.writeHead(303, {
-          'cache-control': 'no-store',
-          'location': '/',
-          'referrer-policy': 'no-referrer',
-          'set-cookie': sessionCookie(
-            cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
-          ),
-        })
-        res.end()
+        this.issueSessionCookie(authority, res)
         return false
       }
       if (req.method === 'GET' && url.pathname === '/' && this.isAuthenticated(req)) {
@@ -275,6 +286,17 @@ export class BrowserAuth {
       }
       this.writeUnauthorized(req, res)
       return false
+    }
+    if (this.isBasicAuthorized(req)) {
+      if (this.isAuthenticated(req)) return true
+      if (req.method === 'GET' && url.pathname === '/') {
+        const authority = requestAuthority(req.headers)
+        if (authority !== undefined) {
+          this.issueSessionCookie(authority, res)
+          return false
+        }
+      }
+      return true
     }
     if (this.isAuthenticated(req)) return true
     this.writeUnauthorized(req, res)
@@ -301,13 +323,59 @@ export class BrowserAuth {
       && payload.expiresAt - payload.issuedAt <= this.maxAgeMilliseconds
   }
 
+  /**
+   * Verify a request's HTTP Basic credential against the bound deployment
+   * credential.
+   * @param request - request headers carrying `Authorization`.
+   * @returns true only when a credential is bound and the header matches; never
+   *   true when no credential is bound.
+   */
+  isBasicAuthorized(request: ConnectionTrustRequest): boolean {
+    if (this.basicAuth === undefined) return false
+    const value = header(request.headers, 'authorization')
+    if (value === undefined || !value.startsWith('Basic ')) return false
+    const decoded = decodeBase64(value.slice('Basic '.length).trim())
+    if (decoded === undefined) return false
+    return tokenMatches(decoded.toString('utf8'), `${this.basicAuth.user}:${this.basicAuth.password}`)
+  }
+
+  /**
+   * Write the 303 that mints the authority-bound session cookie after a
+   * successful one-time credential exchange.
+   * @param authority - canonical Host the cookie value must bind to.
+   * @param res - response owned by this method; it ends the exchange.
+   */
+  private issueSessionCookie(authority: string, res: ConnectionIndexResponse): void {
+    const issuedAt = Date.now()
+    const expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({
+      version: COOKIE_PAYLOAD_VERSION,
+      authority,
+      issuedAt,
+      expiresAt,
+    }, this.secret)
+    res.writeHead(303, {
+      'cache-control': 'no-store',
+      'location': '/',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': sessionCookie(
+        cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
+      ),
+    })
+    res.end()
+  }
+
   private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {
+    const basicConfigured = this.basicAuth !== undefined
     res.writeHead(401, {
       'cache-control': 'no-store',
       'content-type': 'text/plain; charset=utf-8',
+      ...(basicConfigured && { 'www-authenticate': 'Basic realm="dsh web", charset="UTF-8"' }),
     })
     res.end(req.method === 'HEAD'
       ? undefined
-      : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+      : basicConfigured
+        ? 'dsh web basic authentication required (Authorization: Basic)\n'
+        : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
   }
 }
