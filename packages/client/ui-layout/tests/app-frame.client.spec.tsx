@@ -599,7 +599,7 @@ function stubVisualViewport(initial: { height: number; offsetTop: number }) {
     offsetTop: initial.offsetTop,
     addEventListener(type: string, cb: () => void): void { (listeners[type] ??= new Set()).add(cb) },
     removeEventListener(type: string, cb: () => void): void { listeners[type]?.delete(cb) },
-    fire(type: string): void { listeners[type]?.forEach(cb => cb()) },
+    fire(type: string): void { listeners[type]?.forEach((cb) => { cb() }) },
   }
   vi.stubGlobal('visualViewport', vv)
   return vv
@@ -678,7 +678,7 @@ describe('AppFrame — mobile keyboard inset', () => {
     window.innerHeight = 844
     const { frame } = mountFrame()
     expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('344px')
-    act(() => { coarseMatches = false; changeListeners.forEach(cb => cb()) })
+    act(() => { coarseMatches = false; changeListeners.forEach((cb) => { cb() }) })
     expect(frame.style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
   })
 
