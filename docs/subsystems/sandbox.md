@@ -8,14 +8,19 @@ Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox
 
 ## Modes and enforcement
 
-`SandboxMode` governs filesystem effects only. `read-only` asks the backend to deny writes — the POSIX runners additionally grant the `/dev/null` sink their shells require, while the Windows ACL runner grants no explicit writable root and reports partial enforcement for its ambient ACL gaps; `workspace-write` permits writes under the workspace root and the backend's promised temp area; `danger-full-access` bypasses confinement. Network and process visibility are outside this vocabulary.
+`SandboxMode` governs filesystem effects only. `read-only` asks the backend to deny writes — the POSIX runners additionally grant the `/dev/null` sink their shells require, while the Windows ACL runner grants no explicit writable root and reports partial enforcement for its ambient ACL gaps; `workspace-write` permits writes under the workspace root and the backend's promised temp area; `danger-full-access` bypasses confinement. The network axis is a separate per-call promise on the same policy (`SandboxNetworkMode`, below); process visibility stays outside this vocabulary.
 
 ```ts type-equiv
 /**
  * File-effect policy for confined processes. `read-only` permits only required
  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
- * backend-defined temp area; `danger-full-access` bypasses confinement. Network
- * and process visibility are outside this vocabulary.
+ * backend-defined temp area; `danger-full-access` bypasses confinement. The
+ * network axis ({@link SandboxNetworkMode}) rides the same per-call policy as a
+ * SEPARATE promise: `inherit` is the historical default (confinement never
+ * claimed the network), while `none` moves the process into a fresh, empty
+ * network namespace — expressible only by the Linux bubblewrap runner, with
+ * every other runner failing closed. Process visibility stays outside this
+ * vocabulary.
  */
 type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 ```
@@ -25,6 +30,24 @@ Only the first two modes can be sent to a provider. A `danger-full-access` consu
 ```ts type-equiv
 /** A confining (non-`danger-full-access`) mode — the modes a {@link SandboxPolicy} can carry. */
 type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
+```
+
+The network axis rides the same per-call policy but is its own promise: `inherit` keeps the caller's network namespace, while `none` moves the process into a fresh, empty one — expressible only by the Linux bubblewrap runner, every other runner failing closed. Unix sockets live in the mount namespace, so the axis never reaches them; a caller needing unix-plane isolation curates its own binds.
+
+```ts type-equiv
+/**
+ * The network axis of a confined process, resolved per call alongside the
+ * file-effect mode. `inherit` is the historical default: file confinement
+ * never claimed the network, so the process keeps the caller's network
+ * namespace. `none` moves the process into a fresh, empty network namespace
+ * — no interfaces beyond a lone loopback, no routes, no DNS. Only the Linux
+ * bubblewrap runner can express it; every other runner fails closed when it is
+ * requested (no silent passthrough). The axis does NOT govern unix sockets:
+ * they live in the mount namespace, so a `none` process can still reach
+ * socket paths left visible in its filesystem view — callers that need
+ * unix-plane isolation curate their binds.
+ */
+type SandboxNetworkMode = 'inherit' | 'none'
 ```
 
 Enforcement is a reported fact. `full` means the backend governs every file effect promised by the mode; `partial` means an active backend or older kernel ABI governs only a subset, so consumers that require the absolute promise must reject or surface that distinction. Older Landlock ABIs and the Windows ACL runner's Everyone/hard-link boundaries are current partial cases.
@@ -51,6 +74,12 @@ The complete execution policy is resolved and carried per capability call. It in
 interface SandboxExecutionPolicy {
   /** The file-effect mode this execution runs under. */
   mode: SandboxMode
+  /**
+   * The network axis this execution runs under. Resolution fills the
+   * deployment default (it is never an approved per-call override); a
+   * `danger-full-access` execution runs unconfined on both axes.
+   */
+  network: SandboxNetworkMode
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
   /**
@@ -200,9 +229,10 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
  * mode outranks the session's last `sandbox/mode` event, which outranks the
  * deployment default. A session cwd is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
- * cwd.
+ * cwd. The network axis is the deployment default — deliberately NOT a
+ * per-call or per-session override.
  * @param request - optional session and approved mode override.
- * @returns the fully resolved per-call mode and absolute workspace root.
+ * @returns the fully resolved per-call mode, network axis, and absolute workspace root.
  */
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
 

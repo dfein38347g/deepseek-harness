@@ -893,6 +893,7 @@ describe('sandbox escalation API (write/edit)', () => {
     expect(fs.stamped).toEqual([{
       mode: 'workspace-write',
       workspaceRoot: resolve('/session-project'),
+      network: 'inherit',
       sessionId: SessionId('sess-fs-esc'),
     }])
   })
@@ -903,6 +904,7 @@ describe('sandbox escalation API (write/edit)', () => {
     expect(fs.stamped).toEqual([{
       mode: 'read-only',
       workspaceRoot: resolve('/session-project'),
+      network: 'inherit',
       sessionId: SessionId('sess-fs-esc'),
     }])
   })
@@ -940,6 +942,7 @@ describe('sandbox escalation API (write/edit)', () => {
     expect(fs.stamped).toEqual([{
       mode: 'danger-full-access',
       workspaceRoot: resolve('/session-project'),
+      network: 'inherit',
       sessionId: SessionId('sess-fs-esc'),
     }])
   })

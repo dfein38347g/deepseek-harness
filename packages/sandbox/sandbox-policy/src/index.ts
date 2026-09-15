@@ -25,7 +25,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
-import { canonicalPath, type SandboxExecutionPolicy, type SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import { canonicalPath, type SandboxExecutionPolicy, type SandboxMode, type SandboxNetworkMode } from '@deepseek-ai/dsh-sandbox'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -39,19 +39,26 @@ function resolveWorkspaceRoot(path: string): string {
 
 /** Render the policy without claiming which capabilities are mounted. */
 function renderPolicyContext(policy: SandboxExecutionPolicy): string {
+  let text: string
   switch (policy.mode) {
     case 'read-only':
-      return 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
+      text = 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
+      break
     case 'workspace-write':
-      return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
+      text = `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
+      break
     case 'danger-full-access':
-      return 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.'
+      text = 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.'
+      break
     /* v8 ignore next 4 -- SandboxMode is a typed same-process closed union; this branch is only the static exhaustiveness guard. */
     default: {
       const mode: never = policy.mode
       throw new Error(`unreachable sandbox mode: ${String(mode)}`)
     }
   }
+  return policy.network === 'none'
+    ? `${text} Current DSH network policy: none. This session's confined processes run in a fresh, empty network namespace: no interfaces, no routes, no DNS — network access is structurally unavailable and network attempts fail. Unix-socket paths that remain visible in the filesystem view are the only exception by construction.`
+    : text
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -75,6 +82,19 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /**
+   * Network axis every confined process in this deployment runs under
+   * (default: `inherit` — the historical behavior, in which file
+   * confinement never claimed the network). `none` moves each confined
+   * process into a fresh, empty network namespace: no routes, no
+   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design — a
+   * deployment that wants to air-gap its agents (e.g. a red-team
+   * quarantine preset) opts in here, and it is deliberately NOT a
+   * per-session override or an `sandbox_permissions` escape hatch.
+   * Enforceability is the runner's business: bubblewrap expresses it
+   * (`--unshare-net`); the other rungs fail closed.
+   */
+  network?: SandboxNetworkMode
 }
 
 /** Inputs that select the sandbox policy for one capability call. */
@@ -113,12 +133,15 @@ export class SandboxPolicyService extends Service {
     // No schema default: process.cwd() is resolved in the constructor so the
     // stored root is always absolute regardless of how it was supplied.
     workspaceRoot: z.string(),
+    network: z.union(['inherit', 'none'] as const).default('inherit'),
   })
 
   static inject = ['sessionProjections']
 
   /** The deployment default mode — the fallback beneath a session override. */
   readonly defaultMode: SandboxMode
+  /** The deployment network axis — deployment-level by design, never per call. */
+  readonly defaultNetwork: SandboxNetworkMode
   /** The absolute `workspace-write` fallback root for calls without a session cwd. */
   readonly workspaceRoot: string
   constructor(ctx: Context, config: Config) {
@@ -127,6 +150,7 @@ export class SandboxPolicyService extends Service {
     // runtime fact. `workspaceRoot` has NO schema default, so its fallback to
     // the process cwd is real branching, resolved absolute either way.
     this.defaultMode = config.mode as SandboxMode
+    this.defaultNetwork = config.network as SandboxNetworkMode
     this.workspaceRoot = resolveWorkspaceRoot(config.workspaceRoot ?? process.cwd())
 
     ctx.sessionProjections.register({
@@ -156,14 +180,16 @@ export class SandboxPolicyService extends Service {
    * mode outranks the session's last `sandbox/mode` event, which outranks the
    * deployment default. A session cwd is its workspace-write boundary; the
    * configured root is the fallback for agentless calls and sessions without a
-   * cwd.
+   * cwd. The network axis is the deployment default — deliberately NOT a
+   * per-call or per-session override.
    * @param request - optional session and approved mode override.
-   * @returns the fully resolved per-call mode and absolute workspace root.
+   * @returns the fully resolved per-call mode, network axis, and absolute workspace root.
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
     return {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
+      network: this.defaultNetwork,
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }

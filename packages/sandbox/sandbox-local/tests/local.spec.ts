@@ -21,8 +21,8 @@ import {
 import type { Config } from '@deepseek-ai/dsh-sandbox-local'
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../src/profiles.ts'
 
-const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
-const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws' }
+const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws', network: 'inherit' }
+const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws', network: 'inherit' }
 
 /** Every temp dir created by this file (fake launchers and runner entries), removed after each test. */
 const tempDirs: string[] = []
@@ -83,6 +83,16 @@ describe('profile dialects', () => {
     ])
   })
 
+  it('bwrap network "none": appends --unshare-net, a fresh empty network namespace', () => {
+    expect(bwrapProfileArgs({ ...RO, network: 'none' })).toEqual([
+      '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent', '--unshare-net',
+    ])
+    expect(bwrapProfileArgs({ ...WW, network: 'none' })).toEqual([
+      '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent',
+      '--tmpfs', '/tmp', '--bind', '/ws', '/ws', '--unshare-net',
+    ])
+  })
+
   it('landlock read-only: readable tree plus a writable /dev/null, nothing else', () => {
     // /dev/null specifically, NOT /dev: a whole-/dev grant would let confined
     // commands write real host paths beneath it (/dev/shm) under read-only.
@@ -109,7 +119,7 @@ describe('profile dialects', () => {
   })
 
   it('seatbelt workspace-write dedups a workspace root that already IS the temp dir', () => {
-    const profile = seatbeltProfileArgs({ mode: 'workspace-write', workspaceRoot: tmpdir() })[1] as string
+    const profile = seatbeltProfileArgs({ mode: 'workspace-write', workspaceRoot: tmpdir(), network: 'inherit' })[1] as string
     const grant = `(subpath "${realpathSync(tmpdir())}")`
     expect(profile).toContain(grant)
     expect(profile.split(grant)).toHaveLength(2)
@@ -309,6 +319,56 @@ describe('the platform chains', () => {
       }
     })()
     expect(['usable', 'unavailable']).toContain(verdict)
+  })
+})
+
+describe('the network axis (fail-closed on non-bwrap rungs)', () => {
+  /** Assert `confine` threw the structured refusal naming the network axis, not a file-mode failure. */
+  async function expectNetworkRefusal(sandbox: LocalSandboxProvider, policy: SandboxPolicy): Promise<void> {
+    let captured: SandboxUnavailableError | undefined
+    try {
+      sandbox.confine(['true'], policy)
+    } catch (error: unknown) {
+      if (error instanceof SandboxUnavailableError) captured = error
+      else throw error
+    }
+    expect(captured).toBeDefined()
+    expect(captured?.code).toBe(SANDBOX_UNAVAILABLE)
+    // The message names the failing AXIS: the caller (and its user) must
+    // learn that the network promise, not the file mode, is what this host
+    // cannot keep.
+    expect(captured?.message).toContain('network "none"')
+  }
+
+  it('bwrap answers a network "none" request with the unshared namespace, not a refusal', async () => {
+    const probeBwrap = vi.fn(() => true)
+    const { sandbox } = await setup({}, { platform: 'linux', probeBwrap, probeLandlock: () => 'full' })
+    const confined = sandbox.confine(['true'], { ...RO, network: 'none' })
+    expect(confined.argv).toEqual(['bwrap', ...bwrapProfileArgs({ ...RO, network: 'none' }), '--', 'true'])
+  })
+
+  it('a landlock-selected host refuses: the launcher cannot unshare a network namespace', async () => {
+    const probeBwrap = vi.fn(() => false)
+    const probeLandlock = vi.fn(() => 'full' as const)
+    const { sandbox } = await setup({}, { platform: 'linux', probeBwrap, probeLandlock, landlockLauncher: fakeLauncher() })
+    await expectNetworkRefusal(sandbox, { ...RO, network: 'none' })
+  })
+
+  it('a seatbelt-selected host refuses: the profile dialect has no network clause', async () => {
+    const probeBwrap = vi.fn(() => false)
+    const { sandbox } = await setup({}, { chain: ['bwrap', 'seatbelt'], probeBwrap, seatbeltExec: fakeSeatbeltExec(0) })
+    await expectNetworkRefusal(sandbox, { ...WW, network: 'none' })
+  })
+
+  it('a windows-acl-selected host refuses: the ACL token bounds files, not namespaces', async () => {
+    const probeWindowsAcl = vi.fn(() => true)
+    const { sandbox } = await setup({}, {
+      chain: ['windows-acl', 'bwrap'],
+      probeWindowsAcl,
+      probeBwrap: () => false,
+      windowsAclRunnerArgs: ['node', 'windows-acl-runner.js'],
+    })
+    await expectNetworkRefusal(sandbox, { ...RO, network: 'none' })
   })
 })
 

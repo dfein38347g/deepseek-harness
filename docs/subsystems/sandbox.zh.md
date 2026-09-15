@@ -8,14 +8,19 @@
 
 ## 模式与强制执行
 
-`SandboxMode` 仅管控文件系统效果。`read-only` 要求后端拒绝写入——POSIX runner 还会授予其 shell 所需的 `/dev/null` 接收器，而 Windows ACL runner 不授予任何显式可写根目录，并因环境 ACL 缺口报告部分强制执行；`workspace-write` 允许在工作区根目录及后端承诺的临时区域下写入；`danger-full-access` 绕过隔离。网络与进程可见性不在此处的定义范围内。
+`SandboxMode` 仅管控文件系统效果。`read-only` 要求后端拒绝写入——POSIX runner 还会授予其 shell 所需的 `/dev/null` 接收器，而 Windows ACL runner 不授予任何显式可写根目录，并因环境 ACL 缺口报告部分强制执行；`workspace-write` 允许在工作区根目录及后端承诺的临时区域下写入；`danger-full-access` 绕过隔离。网络轴是同一逐调用策略上的独立承诺（见下方 `SandboxNetworkMode`）；进程可见性不在此处的定义范围内。
 
 ```ts type-equiv
 /**
  * File-effect policy for confined processes. `read-only` permits only required
  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
- * backend-defined temp area; `danger-full-access` bypasses confinement. Network
- * and process visibility are outside this vocabulary.
+ * backend-defined temp area; `danger-full-access` bypasses confinement. The
+ * network axis ({@link SandboxNetworkMode}) rides the same per-call policy as a
+ * SEPARATE promise: `inherit` is the historical default (confinement never
+ * claimed the network), while `none` moves the process into a fresh, empty
+ * network namespace — expressible only by the Linux bubblewrap runner, with
+ * every other runner failing closed. Process visibility stays outside this
+ * vocabulary.
  */
 type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 ```
@@ -25,6 +30,24 @@ type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 ```ts type-equiv
 /** A confining (non-`danger-full-access`) mode — the modes a {@link SandboxPolicy} can carry. */
 type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
+```
+
+网络轴随同一逐调用策略携带，但是一项独立承诺：`inherit` 保留调用方的网络命名空间，`none` 将进程移入一个全新的空网络命名空间——仅 Linux bubblewrap runner 能表达，其余 runner 一律 fail closed。unix 套接字位于 mount 命名空间，因此该轴从不触及它们；需要 unix 平面隔离的调用方自行精选绑定。
+
+```ts type-equiv
+/**
+ * The network axis of a confined process, resolved per call alongside the
+ * file-effect mode. `inherit` is the historical default: file confinement
+ * never claimed the network, so the process keeps the caller's network
+ * namespace. `none` moves the process into a fresh, empty network namespace
+ * — no interfaces beyond a lone loopback, no routes, no DNS. Only the Linux
+ * bubblewrap runner can express it; every other runner fails closed when it is
+ * requested (no silent passthrough). The axis does NOT govern unix sockets:
+ * they live in the mount namespace, so a `none` process can still reach
+ * socket paths left visible in its filesystem view — callers that need
+ * unix-plane isolation curate their binds.
+ */
+type SandboxNetworkMode = 'inherit' | 'none'
 ```
 
 强制执行完整性是后端报告的事实。`full` 表示后端管控了该模式承诺的所有文件效果；`partial` 表示活跃后端或较旧的内核 ABI 仅管控其中一个子集，因此要求绝对保证的消费方必须拒绝或向上暴露这一区别。当前的部分强制执行情形包括较旧的 Landlock ABI，以及 Windows ACL runner 的 Everyone 与硬链接边界。
@@ -51,6 +74,12 @@ type SandboxEnforcement = 'full' | 'partial'
 interface SandboxExecutionPolicy {
   /** The file-effect mode this execution runs under. */
   mode: SandboxMode
+  /**
+   * The network axis this execution runs under. Resolution fills the
+   * deployment default (it is never an approved per-call override); a
+   * `danger-full-access` execution runs unconfined on both axes.
+   */
+  network: SandboxNetworkMode
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
   /**
@@ -200,9 +229,10 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
  * mode outranks the session's last `sandbox/mode` event, which outranks the
  * deployment default. A session cwd is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
- * cwd.
+ * cwd. The network axis is the deployment default — deliberately NOT a
+ * per-call or per-session override.
  * @param request - optional session and approved mode override.
- * @returns the fully resolved per-call mode and absolute workspace root.
+ * @returns the fully resolved per-call mode, network axis, and absolute workspace root.
  */
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
 

@@ -23,13 +23,32 @@ export { canonicalPath, writableRoots } from './roots.ts'
 /**
  * File-effect policy for confined processes. `read-only` permits only required
  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
- * backend-defined temp area; `danger-full-access` bypasses confinement. Network
- * and process visibility are outside this vocabulary.
+ * backend-defined temp area; `danger-full-access` bypasses confinement. The
+ * network axis ({@link SandboxNetworkMode}) rides the same per-call policy as a
+ * SEPARATE promise: `inherit` is the historical default (confinement never
+ * claimed the network), while `none` moves the process into a fresh, empty
+ * network namespace — expressible only by the Linux bubblewrap runner, with
+ * every other runner failing closed. Process visibility stays outside this
+ * vocabulary.
  */
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 /** A confining (non-`danger-full-access`) mode — the modes a {@link SandboxPolicy} can carry. */
 export type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
+
+/**
+ * The network axis of a confined process, resolved per call alongside the
+ * file-effect mode. `inherit` is the historical default: file confinement
+ * never claimed the network, so the process keeps the caller's network
+ * namespace. `none` moves the process into a fresh, empty network namespace
+ * — no interfaces beyond a lone loopback, no routes, no DNS. Only the Linux
+ * bubblewrap runner can express it; every other runner fails closed when it is
+ * requested (no silent passthrough). The axis does NOT govern unix sockets:
+ * they live in the mount namespace, so a `none` process can still reach
+ * socket paths left visible in its filesystem view — callers that need
+ * unix-plane isolation curate their binds.
+ */
+export type SandboxNetworkMode = 'inherit' | 'none'
 
 /**
  * The complete file-effect policy resolved for one capability call. The root
@@ -39,6 +58,12 @@ export type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
 export interface SandboxExecutionPolicy {
   /** The file-effect mode this execution runs under. */
   mode: SandboxMode
+  /**
+   * The network axis this execution runs under. Resolution fills the
+   * deployment default (it is never an approved per-call override); a
+   * `danger-full-access` execution runs unconfined on both axes.
+   */
+  network: SandboxNetworkMode
   /** Absolute root directory `workspace-write` may write under. */
   workspaceRoot: string
   /**
@@ -125,18 +150,24 @@ export const SANDBOX_UNAVAILABLE = 'SANDBOX_UNAVAILABLE'
 
 /**
  * Thrown when {@link SandboxProvider.confine} cannot enforce the requested
- * mode. Carries {@link SANDBOX_UNAVAILABLE} through the structured error
- * channel.
+ * confinement — either the file-effect mode (no usable backend on this host)
+ * or the `none` network axis (the selected runner cannot express a network
+ * namespace). Carries {@link SANDBOX_UNAVAILABLE} through the structured error
+ * channel; the message names the failing axis.
  */
 export class SandboxUnavailableError extends HarnessError {
-  constructor(mode: ConfinedSandboxMode, detail?: string) {
+  constructor(mode: ConfinedSandboxMode, detail?: string, network: SandboxNetworkMode = 'inherit') {
     super(
-      `sandbox mode "${mode}" is requested but no sandbox backend is usable on this host; `
-      + 'refusing to run the command unconfined. Install bubblewrap or run a Landlock-enforcing '
-      + 'kernel (Linux), ensure sandbox-exec is usable (macOS), or ensure the ACL '
-      + 'restricted-token runner can start (Windows) — otherwise switch the consumer to '
-      + 'danger-full-access.'
-      + (detail === undefined ? '' : ` Runner failure: ${detail}`),
+      network === 'none'
+        ? 'sandbox network "none" is requested, but no usable runner on this host can express network confinement; '
+          + 'refusing to run the command unconfined. A fresh network namespace requires the Linux bubblewrap runner; '
+          + 'a Landlock, seatbelt, or ACL-token runner confines files only.'
+        : `sandbox mode "${mode}" is requested but no sandbox backend is usable on this host; `
+          + 'refusing to run the command unconfined. Install bubblewrap or run a Landlock-enforcing '
+          + 'kernel (Linux), ensure sandbox-exec is usable (macOS), or ensure the ACL '
+          + 'restricted-token runner can start (Windows) — otherwise switch the consumer to '
+          + 'danger-full-access.'
+          + (detail === undefined ? '' : ` Runner failure: ${detail}`),
       SANDBOX_UNAVAILABLE,
     )
     this.name = 'SandboxUnavailableError'

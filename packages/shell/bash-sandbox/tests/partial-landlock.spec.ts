@@ -61,7 +61,7 @@ async function setup(fatalExit?: number): Promise<SandboxBashExecutor> {
     probeLandlock: () => 'partial',
     landlockLauncher: await fakeLauncher(fatalExit),
   }
-  await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: process.cwd() })
+  await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: process.cwd(), network: 'inherit' })
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(SandboxBashExecutor, { cwd: process.cwd(), timeoutMs: 5_000 })
   return ctx.shell as SandboxBashExecutor
@@ -75,7 +75,7 @@ async function setupConfiguredRunner(runner: string): Promise<SandboxBashExecuto
     runnerCommand: [runner],
     runnerFailureSignatures: ['configured-runner: fatal'],
   })
-  await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: process.cwd() })
+  await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: process.cwd(), network: 'inherit' })
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(SandboxBashExecutor, { cwd: process.cwd(), timeoutMs: 5_000 })
   return ctx.shell as SandboxBashExecutor

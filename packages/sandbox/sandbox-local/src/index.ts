@@ -66,7 +66,7 @@ export interface Config {
 
 /** Probe whether `bwrap` can create the profile; the provider caches the bounded result. */
 function defaultProbeBwrap(timeoutMs: number): boolean {
-  const probe = spawnSync('bwrap', [...bwrapProfileArgs({ mode: 'read-only', workspaceRoot: '/' }), '--', 'true'], {
+  const probe = spawnSync('bwrap', [...bwrapProfileArgs({ mode: 'read-only', workspaceRoot: '/', network: 'inherit' }), '--', 'true'], {
     timeout: timeoutMs,
     stdio: 'ignore',
   })
@@ -83,7 +83,7 @@ function defaultProbeBwrap(timeoutMs: number): boolean {
  * every macOS; if it ever disappears, this probe is what fails closed.
  */
 function defaultProbeSeatbelt(seatbeltExec: string, timeoutMs: number): boolean {
-  const probe = spawnSync(seatbeltExec, [...seatbeltProfileArgs({ mode: 'read-only', workspaceRoot: '/' }), '--', 'true'], {
+  const probe = spawnSync(seatbeltExec, [...seatbeltProfileArgs({ mode: 'read-only', workspaceRoot: '/', network: 'inherit' }), '--', 'true'], {
     timeout: timeoutMs,
     stdio: 'ignore',
   })
@@ -315,6 +315,10 @@ export class LocalSandboxProvider extends SandboxProvider {
    */
   confine(argv: readonly string[], policy: SandboxPolicy): ConfinedArgv {
     if (this.runnerCommand !== undefined) {
+      // A configured runner is a bwrap-compatible operator assertion: the
+      // profile arguments (including a network-`none` `--unshare-net`) ride
+      // it as-is, and a runner that cannot honor the profile refuses at run
+      // time through its own fatal-line dialect — fail closed, per contract.
       return {
         argv: [...this.runnerCommand, ...bwrapProfileArgs(policy), '--', ...argv],
         enforcement: 'full',
@@ -323,6 +327,14 @@ export class LocalSandboxProvider extends SandboxProvider {
       }
     }
     const selected = this.selectRunner(policy.mode)
+    // The network axis is a promise separate from the file effect, and only
+    // bubblewrap can move a process into a fresh network namespace. Any other
+    // runner refuses a `none` request instead of silently inheriting the
+    // caller's network — the "no silent unconfined passthrough" rule, on the
+    // network axis.
+    if (policy.network === 'none' && selected.runner !== 'bwrap') {
+      throw new SandboxUnavailableError(policy.mode, undefined, 'none')
+    }
     const runnerArgv = this.runnerArgv(selected.runner, policy)
     return {
       argv: [...runnerArgv, '--', ...argv],

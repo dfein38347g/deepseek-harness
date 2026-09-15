@@ -121,7 +121,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/tmp', network: 'inherit' })
     const backend = new BashTerminalBackend(ctx, config(), async () => terminalHandle())
     const controller = new AbortController()
     const abortReason = new Error('spawn aborted')
@@ -133,7 +133,7 @@ describe('BashTerminalBackend startup rollback', () => {
   it('closes failed startup and aggregates cleanup failure', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     const spawnTerminal = async (): Promise<SubprocessTerminalHandle> => terminalHandle()
 
     const closed = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
@@ -159,7 +159,7 @@ describe('BashTerminalBackend startup rollback', () => {
   it('starts startup rollback when cancellation wins a stalled initialization', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     const initialization = Promise.withResolvers<undefined>()
     const initializationStarted = Promise.withResolvers<undefined>()
     const close = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
@@ -187,7 +187,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace', network: 'inherit' })
     const terminal = terminalHandle()
     let spawned: SubprocessTerminalSpawnSpec | undefined
     const spawnTerminal = async (spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> => {
@@ -227,7 +227,7 @@ describe('BashTerminalBackend startup rollback', () => {
     expect(initialized).toHaveBeenCalledWith(undefined)
     expect((ctx.sandbox as RecordingSandbox).calls).toEqual([{
       argv: ['/bin/bash', '-i'],
-      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/workspace') },
+      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/workspace'), network: 'inherit' },
     }])
   })
 
@@ -235,7 +235,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/deployment-fallback' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/deployment-fallback', network: 'inherit' })
     const terminal = terminalHandle()
     let spawned: SubprocessTerminalSpawnSpec | undefined
     const spawnTerminal = async (spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> => {
@@ -260,14 +260,14 @@ describe('BashTerminalBackend startup rollback', () => {
     })
     expect((ctx.sandbox as RecordingSandbox).calls).toEqual([{
       argv: ['/bin/bash', '-i'],
-      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/session-workspace') },
+      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/session-workspace'), network: 'inherit' },
     }])
   })
 
   it('rejects a confined spawn without a sandbox provider', async () => {
     const confinedCtx = new Context()
     await confinedCtx.plugin(SessionProjectionRegistry)
-    await confinedCtx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
+    await confinedCtx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace', network: 'inherit' })
     const confined = new BashTerminalBackend(
       confinedCtx,
       config(),
@@ -283,7 +283,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
 
     const publishedController = new AbortController()
     let publishedSignal: AbortSignal | undefined
@@ -328,7 +328,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
     const output = new PassThrough()
     const outcome = Promise.withResolvers<{ exitCode: number | null; signal: NodeJS.Signals | null }>()
     const terminal: SubprocessTerminalHandle = {
@@ -358,7 +358,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
     let spawned: SubprocessTerminalSpawnSpec | undefined
     let sent: TerminalSendRequest | undefined
     const session = {
@@ -396,7 +396,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
     const sends: TerminalSendRequest[] = []
     const session = {
       motd: '',
@@ -431,7 +431,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
     const sessionFor = (waitReason: TerminalWaitReason): LocalPtySession => ({
       startSend: () => ({
         done: Promise.resolve({
@@ -456,7 +456,7 @@ describe('BashTerminalBackend startup rollback', () => {
       const ctx = new Context()
       await ctx.plugin(EmptySandbox)
       await ctx.plugin(SessionProjectionRegistry)
-      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
       const pending = Promise.withResolvers<{
         viewport: string
         waitReason: 'inferred_idle'
@@ -509,7 +509,7 @@ describe('BashTerminalBackend startup rollback', () => {
     const ctx = new Context()
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace', network: 'inherit' })
     const sends: TerminalSendRequest[] = []
     const session = {
       motd: '',
@@ -555,7 +555,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(TerminalSessionService)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     await ctx.plugin(StubSubprocessRuntime)
     const fiber = await ctx.plugin(ptyLocal, config())
     expect(ctx.terminals.listBackends()).toEqual(['shell'])
@@ -570,7 +570,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(TerminalSessionService)
     await ctx.plugin(EmptySandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     await ctx.plugin(StubSubprocessRuntime)
     await ctx.plugin(ptyLocal, config())
 
@@ -588,7 +588,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(TerminalSessionService)
     await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     await ctx.plugin(StubSubprocessRuntime)
 
     const session = ctx.sessions.create(SessionId('mode-owner'))
@@ -638,7 +638,7 @@ describe('terminal-bash plugin shape', () => {
     await ctx.plugin(TerminalSessionService)
     await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp', network: 'inherit' })
     await ctx.plugin(StubSubprocessRuntime)
 
     const session = ctx.sessions.create(SessionId('pending-mode-owner'))

@@ -9,8 +9,15 @@ import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 
 /**
- * Build the bwrap profile arguments for one file-effect policy.
- * @param policy - file-effect policy to express as bwrap mounts.
+ * Build the bwrap profile arguments for one file-effect policy plus its
+ * network axis. The file-effect grants are the standing set (read-only
+ * whole-filesystem bind, fresh `/dev` and `/proc`, die-with-parent;
+ * `workspace-write` adds a tmpfs `/tmp` and a writable workspace bind). The
+ * `none` network axis appends `--unshare-net`, moving the process into a
+ * fresh, empty network namespace (a lone loopback, no routes) — the one
+ * runner that can express it; the local provider fails closed for `none` on
+ * every other rung.
+ * @param policy - file-effect policy (plus network axis) to express as bwrap mounts.
  * @returns profile arguments before the trailing separator and command argv.
  */
 export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
@@ -19,6 +26,7 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
     args.push('--tmpfs', '/tmp')
     args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
   }
+  if (policy.network === 'none') args.push('--unshare-net')
   return args
 }
 

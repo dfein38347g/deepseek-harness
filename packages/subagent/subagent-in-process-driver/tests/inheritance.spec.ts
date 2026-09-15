@@ -40,7 +40,7 @@ async function setupWalled(script: Script): Promise<{ ctx: Context; parent: Agen
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
-  await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
+  await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace, network: 'inherit' })
   await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
   await ctx.plugin(ToolFs)
   await ctx.plugin(ApprovalService)

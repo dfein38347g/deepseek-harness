@@ -55,7 +55,7 @@ const passthrough = (argv: readonly string[]): ConfinedArgv =>
  * per test) and the executor under test on top of it.
  */
 async function setup(
-  config: { mode?: SandboxMode; workspaceRoot?: string } & Config = {},
+  config: { mode?: SandboxMode; network?: 'inherit' | 'none'; workspaceRoot?: string } & Config = {},
   behavior: (argv: readonly string[], policy: SandboxPolicy) => ConfinedArgv = passthrough,
 ) {
   const { mode, workspaceRoot, ...execConfig } = config
@@ -89,7 +89,7 @@ function runResult(exitCode: number | null, stderr: string): ShellRunResult {
 }
 
 function executionPolicy(mode: SandboxMode, workspaceRoot = resolve(process.cwd())): SandboxExecutionPolicy {
-  return { mode, workspaceRoot }
+  return { mode, network: 'inherit', workspaceRoot }
 }
 
 describe('the provider hand-off', () => {
@@ -100,7 +100,7 @@ describe('the provider hand-off', () => {
     expect(result.sandbox).toEqual({ mode: 'read-only', denied: false, enforcement: 'full' })
     expect(calls).toEqual([{
       argv: ['bash', '-c', 'echo \'a b\' "c\'d"'],
-      policy: { mode: 'read-only', workspaceRoot: resolve(process.cwd()) },
+      policy: { mode: 'read-only', workspaceRoot: resolve(process.cwd()), network: 'inherit' },
     }])
   })
 
@@ -151,11 +151,11 @@ describe('the provider hand-off', () => {
     const { bash, calls } = await setup({ mode: 'workspace-write' })
     const result = await bash.run(bash.resolve({ command: 'true' }))
     expect(result.sandbox).toEqual({ mode: 'workspace-write', denied: false, enforcement: 'full' })
-    expect(calls[0]?.policy).toEqual({ mode: 'workspace-write', workspaceRoot: resolve(process.cwd()) })
+    expect(calls[0]?.policy).toEqual({ mode: 'workspace-write', workspaceRoot: resolve(process.cwd()), network: 'inherit' })
   })
 
   it('an explicit workspaceRoot on the policy wins', async () => {
-    const { calls, bash } = await setup({ mode: 'workspace-write', workspaceRoot: '/ws', cwd: tmpdir() })
+    const { calls, bash } = await setup({ mode: 'workspace-write', workspaceRoot: '/ws', network: 'inherit', cwd: tmpdir() })
     await bash.run(bash.resolve({ command: 'true' }))
     expect(calls[0]?.policy.workspaceRoot).toBe(resolve('/ws'))
   })

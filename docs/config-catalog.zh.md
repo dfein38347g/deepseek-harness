@@ -1854,12 +1854,25 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /**
+   * Network axis every confined process in this deployment runs under
+   * (default: `inherit` — the historical behavior, in which file
+   * confinement never claimed the network). `none` moves each confined
+   * process into a fresh, empty network namespace: no routes, no
+   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design — a
+   * deployment that wants to air-gap its agents (e.g. a red-team
+   * quarantine preset) opts in here, and it is deliberately NOT a
+   * per-session override or an `sandbox_permissions` escape hatch.
+   * Enforceability is the runner's business: bubblewrap expresses it
+   * (`--unshare-net`); the other rungs fail closed.
+   */
+  network?: SandboxNetworkMode
 }
 ```
 
-依赖：[`SandboxMode`](subsystems/sandbox.zh.md)
+依赖：[`SandboxMode`](subsystems/sandbox.zh.md) · [`SandboxNetworkMode`](../packages/sandbox/sandbox/src/index.ts)
 
-来源：[`packages/sandbox/sandbox-policy/src/index.ts:70`](../packages/sandbox/sandbox-policy/src/index.ts)
+来源：[`packages/sandbox/sandbox-policy/src/index.ts:77`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 <a id="deepseek-aidsh-sdk-app"></a>
 

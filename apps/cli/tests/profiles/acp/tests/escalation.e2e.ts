@@ -44,7 +44,7 @@ const AGENT: AgentUnderTest = {
 // bwrap on Linux, Seatbelt's sandbox-exec on macOS. Without one the strict
 // attempt would fail closed (SANDBOX_UNAVAILABLE) instead of producing the
 // denial this flow starts from.
-const hasBwrap = spawnSync('bwrap', [...bwrapProfileArgs({ mode: 'read-only', workspaceRoot: '/' }), '--', 'true'], {
+const hasBwrap = spawnSync('bwrap', [...bwrapProfileArgs({ mode: 'read-only', workspaceRoot: '/', network: 'inherit' }), '--', 'true'], {
   timeout: 5_000,
   stdio: 'ignore',
 }).status === 0

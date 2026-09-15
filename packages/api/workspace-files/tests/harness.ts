@@ -54,7 +54,7 @@ export async function openWorkspace(prefix: string): Promise<Harness> {
   const fiber = await ctx.plugin(LocalFileSystem, { cwd: workspace })
   ctx.provide('sandboxPolicy', {
     workspaceRoot: workspace,
-    resolve: () => ({ mode: 'workspace-write', workspaceRoot: workspace }),
+    resolve: () => ({ mode: 'workspace-write', workspaceRoot: workspace, network: 'inherit' }),
   } as never)
   let service: WorkspaceFiles | undefined
   return {

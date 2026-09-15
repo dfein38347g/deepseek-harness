@@ -40,7 +40,7 @@ export function outsideTempWorkspaceParent(tempRoot = tmpdir(), home = homedir()
  */
 export function assertWorkspaceOutsideTemp(cwd: string): void {
   const path = canonicalPath(cwd)
-  for (const root of writableRoots({ mode: 'workspace-write', workspaceRoot: '/tmp' })) {
+  for (const root of writableRoots({ mode: 'workspace-write', network: 'inherit', workspaceRoot: '/tmp' })) {
     if (contains(root, path)) throw new Error('snapshot workspace ' + cwd + ' must be outside temporary writable root ' + root)
   }
 }

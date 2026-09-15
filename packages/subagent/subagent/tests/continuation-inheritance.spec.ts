@@ -45,7 +45,7 @@ async function setup(script: Script) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-continuation-inherit-'))
   roots.push(root)
   await ctx.plugin(JsonlSessionPersistence, { root })
-  await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: root })
+  await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: root, network: 'inherit' })
   await ctx.plugin(ApprovalService)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(TestSessionQuery)
