@@ -463,6 +463,46 @@ describe('dsh-tool-skill', () => {
     expect(decision).toEqual({ kind: 'enter', messages: [proposed] })
   })
 
+  it('publishCatalog: false publishes no catalog, retires a stale one, and keeps the loader and the /name gesture', async () => {
+    const home = await tempDir('tool-no-catalog')
+    const ctx = await setup(home, { publishCatalog: false })
+    ctx.skills.register({
+      name: 'ranked-skill',
+      description: 'Ranked skill',
+      invocation: { modelInvocable: true, userInvocable: true },
+      source: 'runtime',
+      content: 'Ranked body.',
+    })
+
+    const session = Session.create(SessionId('no-catalog'))
+    const agent = sessionAgent(session)
+    openMessageTurn(session)
+    await fireStep(ctx, agent, 1, 1)
+    await fireStep(ctx, agent, 1, 2)
+
+    expect(catalogMessages(session)).toEqual([])
+    expect(ctx.tools.schemas().map(tool => tool.name)).toEqual(['skill'])
+
+    const stale = createUserMessage({
+      content: catalogContent(['- `ranked-skill`: Ranked skill']),
+      source: {
+        kind: 'skill-catalog',
+        form: 'catalog',
+        entries: [{ name: 'ranked-skill', description: 'Ranked skill' }],
+      },
+    })
+    const gesture = createUserMessage({
+      content: [{ type: 'text', text: '/ranked-skill do it' }],
+      source: { kind: 'user' },
+    })
+
+    const decision = await proposeStep(ctx, sessionAgent(session), [stale, gesture])
+    if (decision.kind === 'reject') throw new Error('expected enter decision')
+    expect(decision.kind).toBe('enter')
+    expect(decision.messages.filter(message => (message.source as { kind?: string }).kind === 'skill-catalog')).toEqual([])
+    expect(JSON.stringify(decision.messages)).toContain('Ranked body.')
+  })
+
   it('injects complete replacement catalogs for additions and an empty tombstone for removals', async () => {
     const home = await tempDir('tool-dynamic-catalog')
     const ctx = await setup(home)

@@ -3004,10 +3004,17 @@ Requires: `agents` · `tools` · `skills`
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Whether a step publishes the durable model-facing name-and-description
+   * catalog. `false` publishes no catalog: a previously published one retires
+   * from each step window while the `skill` loader and the `/<name>` gesture
+   * stay available.
+   */
+  publishCatalog?: boolean
 }
 ```
 
-Source: [`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+Source: [`packages/skill/tool-skill/src/index.ts:62`](../packages/skill/tool-skill/src/index.ts)
 
 <a id="deepseek-aidsh-tool-str-replace-editor"></a>
 

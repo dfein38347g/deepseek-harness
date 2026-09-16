@@ -3006,6 +3006,13 @@ export interface Config {
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Whether a step publishes the durable model-facing name-and-description
+   * catalog. `false` publishes no catalog: a previously published one retires
+   * from each step window while the `skill` loader and the `/<name>` gesture
+   * stay available.
+   */
+  publishCatalog?: boolean
 }
 ```
 

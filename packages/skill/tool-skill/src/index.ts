@@ -1,5 +1,6 @@
 /**
- * Durable session skill catalog and model-facing `skill` loader tool.
+ * Model-facing `skill` loader tool; by default also the durable session
+ * skill catalog published at step boundaries.
  *
  * @module @deepseek-ai/dsh-tool-skill
  */
@@ -8,7 +9,7 @@ import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type UserMessage } from '@deepseek-ai/dsh-session'
 import {
@@ -61,22 +62,34 @@ function catalogSourceEntries(
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Whether a step publishes the durable model-facing name-and-description
+   * catalog. `false` publishes no catalog: a previously published one retires
+   * from each step window while the `skill` loader and the `/<name>` gesture
+   * stay available.
+   */
+  publishCatalog?: boolean
 }
 
 /** Validate and default the model-facing skill catalog configuration. */
 export const Config: z<Config> = z.object({
   catalogDescriptionMaxLength: z.number().default(DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH),
+  publishCatalog: z.boolean().default(true),
 })
 
 /**
- * Register the model-facing skill loader and its visibility-matched
- * durable session catalog. The catalog is emitted only when the calling agent
- * resolves this plugin's exact tool registration; a restriction or scoped
- * same-name shadow therefore removes both the schema and its call guidance.
+ * Register the model-facing skill loader and, with `publishCatalog` at its
+ * `true` default, its visibility-matched durable session catalog. The catalog
+ * is emitted only when the calling agent resolves this plugin's exact tool
+ * registration; a restriction or scoped same-name shadow therefore removes
+ * both the schema and its call guidance. With `publishCatalog` `false`, no
+ * catalog is emitted and a previously published one retires from each step
+ * window, while the loader and the `/<name>` gesture stay registered.
  */
 export function apply(ctx: Context, config: Config = {}): void {
   const catalogDescriptionMaxLength = config.catalogDescriptionMaxLength ?? DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH
   assertPositiveInteger('catalogDescriptionMaxLength', catalogDescriptionMaxLength, 3)
+  const publishCatalog = config.publishCatalog !== false
 
   const skillTool = defineTool({
     name: 'skill',
@@ -203,6 +216,18 @@ export function apply(ctx: Context, config: Config = {}): void {
     return { ...decision, messages: [...decision.messages, ...injections] }
   })
 
+  if (publishCatalog) {
+    registerCatalog(ctx, catalogDescriptionMaxLength, skillTool)
+  } else {
+    registerCatalogRetirement(ctx)
+  }
+}
+
+/**
+ * The catalog's step listener: publish, deduplicate, and replace the durable
+ * catalog against the agent's current visible set.
+ */
+function registerCatalog(ctx: Context, catalogDescriptionMaxLength: number, skillTool: ToolDefinition): void {
   // Register after the tool so reverse teardown removes guidance first. Exact definition
   // identity prevents a scoped shadow merely named `skill` from inheriting this catalog.
   //
@@ -247,6 +272,25 @@ export function apply(ctx: Context, config: Config = {}): void {
       messages: existing === undefined
         ? [...decision.messages, catalog]
         : decision.messages.map(message => message.id === existing.message.id ? catalog : message),
+    }
+  })
+}
+
+/**
+ * The `publishCatalog: false` step listener: it publishes no catalog and
+ * retires a catalog an earlier publish left in the step window, so the window
+ * carries none at all while the loader and the gesture stay available.
+ */
+function registerCatalogRetirement(ctx: Context): void {
+  ctx.on('agent/pre-step', async ({ signal }, next): Promise<PreStepDecision> => {
+    const decision = await next()
+    if (decision.kind === 'reject') return decision
+    signal.throwIfAborted()
+    const existing = catalogMessage(decision.messages)
+    if (existing === undefined) return decision
+    return {
+      ...decision,
+      messages: decision.messages.filter(message => message.id !== existing.message.id),
     }
   })
 }
