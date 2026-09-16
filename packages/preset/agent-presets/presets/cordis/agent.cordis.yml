@@ -259,8 +259,16 @@
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
 
+# Deployment overlay (nathan, 2026-09-16): suppress the durable `<available_skills>`
+# catalog — this preset re-adds the row after the web bundle disables it, and a
+# config-less row would reset the row's config to the upstream default (catalog
+# on). pi-smart-skills (QMD shortlist, message mode) is the sole model-facing
+# skill injection in this deployment; the `skill` loader and the `/<name>`
+# gesture stay. See dsh-core-patches 0011.
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
+  config:
+    publishCatalog: false
 
 - id: present
   name: '@deepseek-ai/dsh-tool-present'
