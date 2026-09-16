@@ -1019,6 +1019,179 @@ describe('dsh-tool-skill', () => {
   })
 })
 
+describe('alwaysInclude curated catalog (publishCatalog: false)', () => {
+  it('publishes only the pinned names and stays stable across repeated steps', async () => {
+    const home = await tempDir('tool-curated')
+    const ctx = await setup(home, {
+      publishCatalog: false,
+      alwaysInclude: ['pinned-a', 'pinned-b'],
+    })
+    ctx.skills.register({ name: 'pinned-a', description: 'Pinned A', source: 'runtime', content: 'A body.' })
+    ctx.skills.register({ name: 'pinned-b', description: 'Pinned B', source: 'runtime', content: 'B body.' })
+    ctx.skills.register({ name: 'unpinned-skill', description: 'Unpinned skill', source: 'runtime', content: 'U body.' })
+
+    const session = Session.create(SessionId('curated'))
+    const agent = sessionAgent(session)
+    openMessageTurn(session)
+    expect(JSON.stringify(await composePrefixForAgent(ctx, agent))).toContain('pinned-a')
+    await fireStep(ctx, agent, 1, 1)
+
+    expect(catalogMessages(session)).toHaveLength(1)
+    const published = catalogMessages(session)[0]
+    if (published?.type !== 'user/message') throw new Error('expected curated catalog')
+    expect(published.data.source).toMatchObject({
+      kind: 'skill-catalog',
+      form: 'catalog',
+      entries: [
+        { name: 'pinned-a', description: 'Pinned A' },
+        { name: 'pinned-b', description: 'Pinned B' },
+      ],
+    })
+    expect(JSON.stringify(published.data.content)).not.toContain('unpinned-skill')
+
+    await fireStep(ctx, agent, 1, 2)
+    expect(catalogMessages(session)).toHaveLength(1)
+  })
+
+  it('ignores a pinned name the registry does not resolve and retires the catalog when the set empties', async () => {
+    const home = await tempDir('tool-curated-partial')
+    const ctx = await setup(home, {
+      publishCatalog: false,
+      alwaysInclude: ['curated-skill', 'absent-pinned'],
+    })
+    const dispose = ctx.skills.register({
+      name: 'curated-skill',
+      description: 'Curated skill',
+      source: 'runtime',
+      content: 'Curated body.',
+    })
+    const session = Session.create(SessionId('curated-partial'))
+    const agent = sessionAgent(session)
+    openMessageTurn(session)
+    await fireStep(ctx, agent, 1, 1)
+
+    const initial = catalogMessages(session)[0]
+    if (initial?.type !== 'user/message') throw new Error('expected curated catalog')
+    expect(JSON.stringify(initial.data.content)).not.toContain('absent-pinned')
+
+    // The only resolved pin disappears: the curated set is empty, so the
+    // proposed window sheds its published catalog instead of claiming that no
+    // skills exist at all.
+    dispose()
+    const decision = await proposeStep(ctx, sessionAgent(session), [initial.data])
+    if (decision.kind === 'reject') throw new Error('expected enter decision')
+    expect(decision.messages.filter(message => (message.source as { kind?: string }).kind === 'skill-catalog')).toEqual([])
+  })
+
+  it('excludes a pinned skill that is not model-invocable', async () => {
+    const home = await tempDir('tool-curated-policy')
+    const ctx = await setup(home, {
+      publishCatalog: false,
+      alwaysInclude: ['user-only-pinned'],
+    })
+    ctx.skills.register({
+      name: 'user-only-pinned',
+      description: 'User-only pinned',
+      invocation: { modelInvocable: false, userInvocable: true },
+      source: 'runtime',
+      content: 'User-only body.',
+    })
+
+    const session = Session.create(SessionId('curated-policy'))
+    const agent = sessionAgent(session)
+    openMessageTurn(session)
+    await fireStep(ctx, agent, 1, 1)
+    await fireStep(ctx, agent, 1, 2)
+    expect(catalogMessages(session)).toEqual([])
+  })
+
+  it('publishes a replacement curated catalog when the pinned set changes', async () => {
+    const home = await tempDir('tool-curated-churn')
+    const ctx = await setup(home, {
+      publishCatalog: false,
+      alwaysInclude: ['first-pinned', 'second-pinned'],
+    })
+    const disposeFirst = ctx.skills.register({
+      name: 'first-pinned',
+      description: 'First pinned',
+      source: 'runtime',
+      content: 'First body.',
+    })
+    const session = Session.create(SessionId('curated-churn'))
+    const agent = sessionAgent(session)
+    openMessageTurn(session)
+
+    await fireStep(ctx, agent, 1, 1)
+    expect(catalogMessages(session)).toHaveLength(1)
+
+    ctx.skills.register({
+      name: 'second-pinned',
+      description: 'Second pinned',
+      source: 'runtime',
+      content: 'Second body.',
+    })
+    await fireStep(ctx, agent, 1, 2)
+    const addition = catalogMessages(session)[1]
+    if (addition?.type !== 'user/message') throw new Error('expected curated replacement')
+    expect(addition.data.source).toMatchObject({
+      kind: 'skill-catalog',
+      form: 'catalog',
+      update: true,
+      entries: [
+        { name: 'first-pinned', description: 'First pinned' },
+        { name: 'second-pinned', description: 'Second pinned' },
+      ],
+    })
+    expect(JSON.stringify(addition.data.content)).toContain('first-pinned')
+    expect(JSON.stringify(addition.data.content)).toContain('second-pinned')
+
+    await fireStep(ctx, agent, 1, 3)
+    expect(catalogMessages(session)).toHaveLength(2)
+    disposeFirst()
+  })
+
+  it('has no effect while publishCatalog stays true: the full visible set is already published', async () => {
+    const home = await tempDir('tool-curated-full')
+    const ctx = await setup(home, {
+      publishCatalog: true,
+      alwaysInclude: ['pinned-a'],
+    })
+    ctx.skills.register({ name: 'pinned-a', description: 'Pinned A', source: 'runtime', content: 'A body.' })
+    ctx.skills.register({ name: 'other-skill', description: 'Other skill', source: 'runtime', content: 'O body.' })
+
+    const prefix = await composePrefix(ctx, '/workspace')
+    expect(JSON.stringify(prefix)).toContain('pinned-a')
+    expect(JSON.stringify(prefix)).toContain('other-skill')
+  })
+
+  it('keeps the skill loader and the /name gesture working for pinned skills', async () => {
+    const home = await tempDir('tool-curated-loader')
+    const ctx = await setup(home, {
+      publishCatalog: false,
+      alwaysInclude: ['pinned-a'],
+    })
+    ctx.skills.register({ name: 'pinned-a', description: 'Pinned A', source: 'runtime', content: 'A body.' })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('curated-load'),
+      name: 'skill',
+      arguments: { name: 'pinned-a' },
+      agent: { session: { header: { cwd: home } } } as never,
+    })
+    expect(result.isError).toBe(false)
+    expect(JSON.stringify(result.content)).toContain('A body.')
+
+    const gesture = createUserMessage({ content: [{ type: 'text', text: '/pinned-a go' }], source: { kind: 'user' } })
+    const session = Session.create(SessionId('curated-gesture'))
+    const decision = await proposeStep(ctx, sessionAgent(session), [gesture])
+    if (decision.kind === 'reject') throw new Error('expected enter decision')
+    expect(decision.messages.some(message =>
+      (message.source as { kind?: string; name?: string }).kind === 'skill-invocation'
+      && (message.source as { name?: string }).name === 'pinned-a')).toBe(true)
+  })
+})
+
 describe('user-explicit invocation injection', () => {
   async function writePolicySkill(root: string, name: string, description: string, policy: string, body: string): Promise<void> {
     const dir = join(root, name)

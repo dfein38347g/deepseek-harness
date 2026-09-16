@@ -69,12 +69,24 @@ export interface Config {
    * stay available.
    */
   publishCatalog?: boolean
+  /**
+   * Skill names that a suppressed catalog still publishes. With `publishCatalog`
+   * `false`, a catalog containing exactly the pinned names that are visible
+   * and model-invocable is published at every step boundary, so the curated set
+   * is always advertised even though the full list is not. A pinned name the
+   * registry does not resolve is ignored (warned once), and a pinned set that
+   * resolves to nothing retires a previously published catalog instead of
+   * republishing it. With `publishCatalog` `true` the key has no effect,
+   * because the full visible set is already published.
+   */
+  alwaysInclude?: string[]
 }
 
 /** Validate and default the model-facing skill catalog configuration. */
 export const Config: z<Config> = z.object({
   catalogDescriptionMaxLength: z.number().default(DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH),
   publishCatalog: z.boolean().default(true),
+  alwaysInclude: z.array(z.string()).default([]),
 })
 
 /**
@@ -84,12 +96,16 @@ export const Config: z<Config> = z.object({
  * registration; a restriction or scoped same-name shadow therefore removes
  * both the schema and its call guidance. With `publishCatalog` `false`, no
  * catalog is emitted and a previously published one retires from each step
- * window, while the loader and the `/<name>` gesture stay registered.
+ * window, while the loader and the `/<name>` gesture stay registered — except
+ * for names listed in `alwaysInclude`, which are published as a curated
+ * catalog in place of the full one.
  */
 export function apply(ctx: Context, config: Config = {}): void {
   const catalogDescriptionMaxLength = config.catalogDescriptionMaxLength ?? DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH
   assertPositiveInteger('catalogDescriptionMaxLength', catalogDescriptionMaxLength, 3)
   const publishCatalog = config.publishCatalog !== false
+  const alwaysInclude = new Set(config.alwaysInclude ?? [])
+  const warnedPinned = new Set<string>()
 
   const skillTool = defineTool({
     name: 'skill',
@@ -218,16 +234,45 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   if (publishCatalog) {
     registerCatalog(ctx, catalogDescriptionMaxLength, skillTool)
+  } else if (alwaysInclude.size > 0) {
+    registerCatalog(ctx, catalogDescriptionMaxLength, skillTool, {
+      select: skills => skills.filter(skill => alwaysInclude.has(skill.name)),
+      retireWhenEmpty: true,
+      pinned: [...alwaysInclude],
+      warnUnresolved: (name) => {
+        if (!warnedPinned.has(name)) {
+          warnedPinned.add(name)
+          console.warn(`[dsh-tool-skill] alwaysInclude lists "${name}", which is not a visible, model-invocable skill of this session; the name is ignored.`)
+        }
+      },
+    })
   } else {
     registerCatalogRetirement(ctx)
   }
 }
 
 /**
- * The catalog's step listener: publish, deduplicate, and replace the durable
- * catalog against the agent's current visible set.
+ * Selection knobs for the step listener. `select` narrows the agent's visible
+ * model-invocable set before publication (the full catalog passes it through
+ * unchanged); `retireWhenEmpty` makes a curated set that resolves to nothing
+ * remove a published catalog from the step window instead of republishing an
+ * empty "no skills available" tombstone; `warnUnresolved` reports pinned
+ * names the visible set does not contain (once per name, fail-open).
  */
-function registerCatalog(ctx: Context, catalogDescriptionMaxLength: number, skillTool: ToolDefinition): void {
+interface CatalogOptions {
+  readonly select?: (skills: SkillSummary[]) => SkillSummary[]
+  readonly retireWhenEmpty?: boolean
+  /** Every name the curated configuration lists; unresolved ones are reported through `warnUnresolved`. */
+  readonly pinned?: string[]
+  readonly warnUnresolved?: (name: string) => void
+}
+
+/**
+ * The catalog's step listener: publish, deduplicate, and replace the durable
+ * catalog against the agent's current visible set (or a curated selection of
+ * it).
+ */
+function registerCatalog(ctx: Context, catalogDescriptionMaxLength: number, skillTool: ToolDefinition, options: CatalogOptions = {}): void {
   // Register after the tool so reverse teardown removes guidance first. Exact definition
   // identity prevents a scoped shadow merely named `skill` from inheriting this catalog.
   //
@@ -248,18 +293,33 @@ function registerCatalog(ctx: Context, catalogDescriptionMaxLength: number, skil
       : { skills: [], complete: true }
     signal.throwIfAborted()
     if (!snapshot.complete) return decision
-    const skills = snapshot.skills.filter(isModelInvocable)
-    const entries = catalogSourceEntries(skills, catalogDescriptionMaxLength)
+    const invocable = snapshot.skills.filter(isModelInvocable)
+    if (options.pinned !== undefined) {
+      const visible = new Set(invocable.map(skill => skill.name))
+      for (const name of options.pinned) {
+        if (!visible.has(name)) options.warnUnresolved?.(name)
+      }
+    }
+    const selected = (options.select ?? (skills => skills))(invocable)
+    const entries = catalogSourceEntries(selected, catalogDescriptionMaxLength)
     const digest = digestCatalogEntries(entries)
     const history = catalogHistory(agent)
     const existing = catalogMessage(decision.messages)
+    if (options.retireWhenEmpty === true && entries.length === 0) {
+      // A curated set that no longer resolves to a visible, model-invocable
+      // skill publishes nothing, and retires whatever a prior publication left
+      // in the step window; the loader and the gesture stay available.
+      return existing === undefined
+        ? decision
+        : { ...decision, messages: decision.messages.filter(message => message.id !== existing.message.id) }
+    }
     if (history.visibleDigest === digest) {
       return existing === undefined
         ? decision
         : { ...decision, messages: decision.messages.filter(message => message.id !== existing.message.id) }
     }
     if (existing !== undefined && digestCatalogEntries(existing.entries) === digest) return decision
-    if (!history.published && skills.length === 0) {
+    if (!history.published && selected.length === 0) {
       return existing === undefined
         ? decision
         : { ...decision, messages: decision.messages.filter(message => message.id !== existing.message.id) }

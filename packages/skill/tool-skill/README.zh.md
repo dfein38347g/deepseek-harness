@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-agent 可以在会话期间发现并加载 skill。在首次请求前，如果存在模型可调用 skill 且 `skill` 工具可见，agent 会收到一份持久目录，列出可用 skill 的名称与有长度上限的描述，并可用 `skill` 工具加载完整指令。用户可以用 `/name` 调用某个用户可调用的 skill，把相同的指令注入该步骤。目录变更会追加一份完整替换，其中空目录会停用旧名称；可配置 `catalogDescriptionMaxLength` 来限制每条描述的长度。将 `publishCatalog` 设为 `false` 则完全不发布目录——此前发布的目录会从每个步骤窗口中退役——而 `skill` 加载器与 `/name` 手势保持可用。
+agent 可以在会话期间发现并加载 skill。在首次请求前，如果存在模型可调用 skill 且 `skill` 工具可见，agent 会收到一份持久目录，列出可用 skill 的名称与有长度上限的描述，并可用 `skill` 工具加载完整指令。用户可以用 `/name` 调用某个用户可调用的 skill，把相同的指令注入该步骤。目录变更会追加一份完整替换，其中空目录会停用旧名称；可配置 `catalogDescriptionMaxLength` 来限制每条描述的长度。将 `publishCatalog` 设为 `false` 则完全不发布目录——此前发布的目录会从每个步骤窗口中退役——而 `skill` 加载器与 `/name` 手势保持可用。`publishCatalog` 为 `false` 时，在 `alwaysInclude` 中列出名称，则改为在每个步骤边界发布一份恰好包含这些可见且模型可调用的名称的精选目录——当该集合不再解析出任何 skill 时目录再次退役；`true` 默认值下该键无效。
 
 ## 目录
 
@@ -45,6 +45,7 @@ agent 可以在会话期间发现并加载 skill。在首次请求前，如果�
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | 会话目录中渲染的规范化描述最大长度；最小为 3 |
 | `publishCatalog` | `true` | 发布持久化的模型可见目录；`false` 时不发布任何目录，并使此前发布的目录从每个步骤窗口退役，同时 `skill` 加载器与 `/name` 手势保持可用 |
+| `alwaysInclude` | `[]` | 配合 `publishCatalog: false`：在每个步骤边界恰好发布这些可见且模型可调用的固定名称构成的精选目录；registry 无法解析的固定名称被忽略（仅告警一次），不再解析出任何 skill 的集合会使此前发布的目录退役；`publishCatalog: true` 时该键无效 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-skill)是每个受支持字段的穷尽式真源。
 
@@ -130,7 +131,7 @@ A user may also invoke a skill directly; its <skill_content> block then appears 
 
 #### Token 影响
 
-重复输入成本随 skill 数量和 `catalogDescriptionMaxLength` 增长；当列表为空或工具被隐藏或遮蔽时，不会发送初始目录 token。每次实际目录变更都会添加一条保留的完整替换消息。`publishCatalog: false` 的部署完全不发送目录 token。
+重复输入成本随 skill 数量和 `catalogDescriptionMaxLength` 增长；当列表为空或工具被隐藏或遮蔽时，不会发送初始目录 token。每次实际目录变更都会添加一条保留的完整替换消息。`publishCatalog: false` 的部署完全不发送目录 token；在其中使用 `alwaysInclude` 则只发送固定条目（名称加截断后的描述）的 token。
 
 #### KV Cache 影响
 

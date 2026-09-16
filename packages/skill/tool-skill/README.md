@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents can discover and load skills during a session. Before the first request, when model-invocable skills exist and the `skill` tool is visible, they receive a durable catalog of available skill names and capped descriptions, and can use the `skill` tool to load full instructions. Users can invoke a user-invocable skill with `/name`, which injects the same instructions into that step. Catalog changes append a complete replacement, including an empty catalog that retires old names; configure `catalogDescriptionMaxLength` to limit each description. Set `publishCatalog` to `false` to never publish a catalog at all — a previously published one then retires from each step window — while the `skill` loader and the `/name` gesture stay available.
+Agents can discover and load skills during a session. Before the first request, when model-invocable skills exist and the `skill` tool is visible, they receive a durable catalog of available skill names and capped descriptions, and can use the `skill` tool to load full instructions. Users can invoke a user-invocable skill with `/name`, which injects the same instructions into that step. Catalog changes append a complete replacement, including an empty catalog that retires old names; configure `catalogDescriptionMaxLength` to limit each description. Set `publishCatalog` to `false` to never publish a catalog at all — a previously published one then retires from each step window — while the `skill` loader and the `/name` gesture stay available. With `publishCatalog` `false`, listing names in `alwaysInclude` instead publishes a curated catalog of exactly those visible, model-invocable names at every step boundary — a set that no longer resolves retires it again; with the `true` default the key has no effect.
 
 ## Table of Contents
 
@@ -45,6 +45,7 @@ Load the plugin together with the skill registry and at least one provider. The 
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | Maximum normalized description length rendered in the session catalog; minimum 3 |
 | `publishCatalog` | `true` | Publishes the durable model-facing catalog; `false` publishes none and retires a previously published one from each step window, while the `skill` loader and the `/name` gesture stay available |
+| `alwaysInclude` | `[]` | With `publishCatalog: false`: the pinned names published as a curated catalog (visible and model-invocable only) at every step boundary; a name the registry does not resolve is ignored (warned once), a set that resolves to nothing retires the catalog, and with `publishCatalog: true` the key has no effect |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-skill) is the exhaustive source for every accepted field.
 
@@ -130,7 +131,7 @@ A user may also invoke a skill directly; its <skill_content> block then appears 
 
 #### Token effect
 
-Repeated input cost scales with skill count and `catalogDescriptionMaxLength`; no initial catalog tokens are sent when the list is empty or the tool is hidden or shadowed. Each actual catalog change adds one retained complete replacement message. A `publishCatalog: false` deployment sends no catalog tokens at all.
+Repeated input cost scales with skill count and `catalogDescriptionMaxLength`; no initial catalog tokens are sent when the list is empty or the tool is hidden or shadowed. Each actual catalog change adds one retained complete replacement message. A `publishCatalog: false` deployment sends no catalog tokens at all; with `alwaysInclude` it sends only the pinned entries' tokens (names plus capped descriptions).
 
 #### KV Cache effect
 

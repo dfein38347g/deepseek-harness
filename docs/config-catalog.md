@@ -3011,6 +3011,17 @@ export interface Config {
    * stay available.
    */
   publishCatalog?: boolean
+  /**
+   * Skill names that a suppressed catalog still publishes. With `publishCatalog`
+   * `false`, a catalog containing exactly the pinned names that are visible
+   * and model-invocable is published at every step boundary, so the curated set
+   * is always advertised even though the full list is not. A pinned name the
+   * registry does not resolve is ignored (warned once), and a pinned set that
+   * resolves to nothing retires a previously published catalog instead of
+   * republishing it. With `publishCatalog` `true` the key has no effect,
+   * because the full visible set is already published.
+   */
+  alwaysInclude?: string[]
 }
 ```
 
