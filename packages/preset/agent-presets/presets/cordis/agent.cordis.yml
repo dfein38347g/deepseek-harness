@@ -259,16 +259,24 @@
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
 
-# Deployment overlay (nathan, 2026-09-16): suppress the durable `<available_skills>`
-# catalog — this preset re-adds the row after the web bundle disables it, and a
-# config-less row would reset the row's config to the upstream default (catalog
-# on). pi-smart-skills (QMD shortlist, message mode) is the sole model-facing
-# skill injection in this deployment; the `skill` loader and the `/<name>`
-# gesture stay. See dsh-core-patches 0011.
+# Deployment overlay (nathan, 2026-09-16, extended 2026-09-17): suppress the
+# durable `<available_skills>` catalog and pin this preset's own two
+# composition-authoring skills as the curated catalog standing in for it. This
+# preset re-adds the row after the web bundle disables it, and a config-less
+# row would reset the row's config to the upstream default (catalog on). With
+# publishCatalog false, alwaysInclude publishes a catalog of exactly the pinned
+# names (visible and model-invocable only) at every step boundary, and retires
+# it again when the set no longer resolves. The full shared-tree list is never
+# published here; for that tree pi-smart-skills (QMD shortlist, message mode)
+# remains the sole filtered channel. The `skill` loader and the `/<name>`
+# gesture stay. See dsh-core-patches 0012.
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
   config:
     publishCatalog: false
+    alwaysInclude:
+      - cordis-plugin-development
+      - editing-cordis-compositions
 
 - id: present
   name: '@deepseek-ai/dsh-tool-present'
