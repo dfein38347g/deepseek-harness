@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-sandbox-policy",
-  "description": "Per-call sandbox policy resolver and current model context: deployment fallbacks plus each session's mode and workspace root, shared by every enforcing capability family",
+  "description": "Per-call sandbox policy resolver and current model context: deployment fallbacks (file-effect mode, network axis, workspace root) plus each session's mode override and preset network lock, shared by every enforcing capability family",
   "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
@@ -22,12 +22,17 @@
       "types": "./lib/types/invariant.d.ts",
       "default": "./lib/invariant.js"
     },
+    "./network-lock": {
+      "types": "./lib/types/network-lock.d.ts",
+      "default": "./lib/network-lock.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
     "lib/invariant.js",
+    "lib/network-lock.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",

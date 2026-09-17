@@ -46,7 +46,10 @@ export type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
  * requested (no silent passthrough). The axis does NOT govern unix sockets:
  * they live in the mount namespace, so a `none` process can still reach
  * socket paths left visible in its filesystem view — callers that need
- * unix-plane isolation curate their binds.
+ * unix-plane isolation curate their binds. A preset may additionally pin
+ * individual sessions to `none` via the mount-time network lock
+ * (`dsh-sandbox-policy/network-lock`); once locked, no runtime path
+ * loosens the axis.
  */
 export type SandboxNetworkMode = 'inherit' | 'none'
 
@@ -59,9 +62,10 @@ export interface SandboxExecutionPolicy {
   /** The file-effect mode this execution runs under. */
   mode: SandboxMode
   /**
-   * The network axis this execution runs under. Resolution fills the
-   * deployment default (it is never an approved per-call override); a
-   * `danger-full-access` execution runs unconfined on both axes.
+   * The network axis this execution runs under: the stricter of the
+   * deployment default and any preset network lock the session's log
+   * carries — never an approved per-call override, and never loosenable at
+   * runtime. A `danger-full-access` execution runs unconfined on both axes.
    */
   network: SandboxNetworkMode
   /** Absolute root directory `workspace-write` may write under. */

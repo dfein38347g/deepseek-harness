@@ -651,6 +651,25 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/sandbox/sandbox-policy/src/session-mode.ts:33`](../packages/sandbox/sandbox-policy/src/session-mode.ts)
 
+<a id="sandboxnetwork--log-only"></a>
+
+#### `sandbox/network` — log-only
+
+```ts persistence-catalog
+/**
+ * The session's network-axis lock was recorded — log-only (like
+ * `sandbox/mode`; NOT a surface event, carries no `surfaceOp`):
+ * durable and replayable, never in the model transcript. The LAST such
+ * event is the session's lock (folded by the sandboxNetwork projection
+ * unit). The preset-mounted network-lock plugin is the only writer.
+ */
+'sandbox/network': {
+  network: SandboxNetworkMode
+}
+```
+
+来源：[`packages/sandbox/sandbox-policy/src/session-network.ts:38`](../packages/sandbox/sandbox-policy/src/session-network.ts)
+
 ### `schedule/*`
 
 <a id="schedulechange--log-only"></a>

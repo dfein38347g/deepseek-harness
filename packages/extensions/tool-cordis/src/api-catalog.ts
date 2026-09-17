@@ -1414,7 +1414,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'sandboxPolicy',
     summary: 'The sandbox-policy service (`ctx.sandboxPolicy`).',
-    description: 'The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mode, fallback workspace root, and current request-time policy section. Tool layers call resolve for each execution so a session\'s mode log and immutable cwd travel together to every enforcing capability.',
+    description: 'The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mode, the network axis, the fallback workspace root, and the current request-time policy section. Tool layers call resolve for each execution so a session\'s mode log, network lock, and immutable cwd travel together to every enforcing capability.',
     methods: [
       {
         signature: 'readonly defaultMode: SandboxMode',
@@ -1423,7 +1423,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'readonly defaultNetwork: SandboxNetworkMode',
-        description: 'The deployment network axis — deployment-level by design, never per call.',
+        description: 'The deployment network axis — the deployment-level floor; a preset\'s mount-time network lock may pin individual sessions further to `none`, never per call.',
         parameters: [],
       },
       {
@@ -1433,7 +1433,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy',
-        description: 'Resolve the complete policy for one capability call. An approved explicit mode outranks the session\'s last `sandbox/mode` event, which outranks the deployment default. A session cwd is its workspace-write boundary; the configured root is the fallback for agentless calls and sessions without a cwd. The network axis is the deployment default — deliberately NOT a per-call or per-session override.',
+        description: 'Resolve the complete policy for one capability call. An approved explicit mode outranks the session\'s last `sandbox/mode` event, which outranks the deployment default. A session cwd is its workspace-write boundary; the configured root is the fallback for agentless calls and sessions without a cwd. The network axis resolves to the stricter of the deployment floor and the session\'s preset network lock — deliberately NOT a per-call override, a model choice, or a runtime switch.',
         parameters: [{ name: 'request', description: 'optional session and approved mode override.' }],
         returns: 'the fully resolved per-call mode, network axis, and absolute workspace root.',
       },

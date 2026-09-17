@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可以让每次受限的 bash、文件系统和终端调用遵循同一份文件操作策略。部署方选择默认模式和回退工作区根目录，每个会话则可以独立切换模式。会话选择可跨重启保留，所有强制执行能力在一次调用中使用相同的模式和工作区。每次模型请求前，模型都会收到有效策略和工作区说明，但不会收到已挂载能力的清单。
+使用本包可以让每次受限的 bash、文件系统和终端调用遵循同一份文件操作策略。部署方选择默认模式和回退工作区根目录，每个会话则可以独立切换模式。部署方还可以为所有受限进程固定网络轴，预设则可以用本包的挂载期网络锁把自己的会话进一步锁定到隔离值。会话选择可跨重启保留，所有强制执行能力在一次调用中使用相同的模式和工作区。每次模型请求前，模型都会收到有效策略和工作区说明，但不会收到已挂载能力的清单。
 
 ## 目录
 
@@ -46,6 +46,7 @@ kind: "package-reference"
 |---|---|---|
 | `mode` | `read-only` | 会话起始的部署默认模式，加载时验证 |
 | `workspaceRoot` | `process.cwd()` | 无 agent 调用或没有 cwd 的会话在 `workspace-write` 下可写入的回退根目录；普通 agent 调用改用会话的不可变 cwd |
+| `network` | `inherit` | 部署的网络轴基线：`none` 把每个受限进程移入全新的空网络命名空间。预设还可以挂载 `./network-lock` 插件行，把自己的会话进一步锁定到 `none` —— 锁只能收紧，不能放宽 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-sandbox-policy)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -53,9 +54,19 @@ kind: "package-reference"
 
 会话的模式可以在运行时通过 UI 策略控件或显式切换来更改；切换记录在会话日志中，并在该会话的下一次受限调用时生效。切换通过回放跨重启保留，每个会话保持自己的模式——两个会话绝不会看到彼此状态。切换后的会话继续以不可变的工作区 cwd 作为写入边界。
 
+### 锁定会话网络（预设网络锁）
+
+`./network-lock` 子路径是面向必须隔离网络运行的预设的挂载期插件行。以 `network: none` 挂载后，它把挂载该预设的 agent（智能体）发布的每个会话都锁定到 `none` 轴：向会话日志追加一个 `sandbox/network` 事件，因此锁能经回放跨重启保留，而解析出的策略——以及模型的当前策略上下文——只对被锁会话生效。该行只能收紧：部署自身的 `network` 基线仍然适用于一切，被锁会话不能放宽它；取值超出 `inherit`/`none` 的配置会在挂载时抛出异常，而不是悄悄释放一个隔离预设。
+
+```yaml
+- name: '@deepseek-ai/dsh-sandbox-policy/network-lock'
+  config:
+    network: none
+```
+
 ### 失败与恢复
 
-无效的配置模式会在插件加载时被拒绝，因此拼写错误会导致显式报错，而不是静默改变策略。没有 cwd 的会话与无 agent 调用回退到配置的工作区根目录；带已批准显式模式的调用只在该次调用中使用该模式。
+无效的配置模式会在插件加载时被拒绝，无效的网络锁配置会在挂载时抛出异常，因此拼写错误会导致显式报错，而不是静默改变策略或释放一个隔离预设。没有 cwd 的会话与无 agent 调用回退到配置的工作区根目录；带已批准显式模式的调用只在该次调用中使用该模式。
 
 -----
 
@@ -69,11 +80,11 @@ kind: "package-reference"
 
 ### 解析优先级
 
-`resolve({ session, mode })` 返回一份完整的逐调用策略：已批准的显式模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于部署默认值。会话的不可变 `cwd` 先按文件系统语义规范化，再成为工作区根目录，因此 `symlink/..` 与进程工作目录解析一致；否则使用配置的回退值。
+`resolve({ session, mode })` 返回一份完整的逐调用策略：已批准的显式模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于部署默认值。网络轴解析为部署基线与会话最后一条 `sandbox/network` 事件（预设锁）中更严格的一方——`none` 来自任意一方都胜。会话的不可变 `cwd` 先按文件系统语义规范化，再成为工作区根目录，因此 `symlink/..` 与进程工作目录解析一致；否则使用配置的回退值。
 
 ### 逐会话存储
 
-运行时切换是在对应会话日志中追加的一条仅写入日志的 `sandbox/mode` 事件——切换本身就是事件，任何机制都不会在带外修改模式状态。`effective = explicit grant ?? fold(events) ?? deployment default`，因此覆盖通过回放跨重启保留，两个会话也绝不会看到彼此状态。工作区标识无需事件：创建时记录的不可变 `SessionHeader.cwd` 是该会话每次调用使用的根。事件仍只进入日志；在每次请求前，归属方会把当前事实贡献给完整运行时上下文快照，agent loop（智能体循环）将该快照记录为一条带来源的 `user/message`。
+运行时切换是在对应会话日志中追加的一条仅写入日志的 `sandbox/mode` 事件——切换本身就是事件，任何机制都不会在带外修改模式状态。`effective = explicit grant ?? fold(events) ?? deployment default`，因此覆盖通过回放跨重启保留，两个会话也绝不会看到彼此状态。工作区标识无需事件：创建时记录的不可变 `SessionHeader.cwd` 是该会话每次调用使用的根。预设网络锁是同样的形状：每个被锁会话一条仅写入日志的 `sandbox/network` 事件，只由 `./network-lock` 插件的 `session/created` 监听器写入——锁没有其他写路径，也没有任何运行时开关能放宽它。这些事件都只进入日志；在每次请求前，归属方会把当前事实贡献给完整运行时上下文快照，agent loop（智能体循环）将该快照记录为一条带来源的 `user/message`。
 
 ### 模型可见文本
 
@@ -85,6 +96,8 @@ kind: "package-reference"
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`SandboxPolicyService`、`Config` schema、策略解析与上下文贡献 |
 | [`src/session-mode.ts`](src/session-mode.ts) | `sandbox/mode` 事件、其 fold 与写入路径 |
+| [`src/session-network.ts`](src/session-network.ts) | `sandbox/network` 事件与写入路径（预设锁的唯一写入方） |
+| [`src/network-lock.ts`](src/network-lock.ts) | 挂载期的预设网络锁插件（`./network-lock` 子路径） |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式配套组件：拒绝超出封闭词汇的 `sandbox/mode` 值 |
 
 </details>
@@ -145,7 +158,7 @@ Current DSH file policy: danger-full-access. The DSH file sandbox does not restr
 这些限制界定了本包提供的策略范围。它们是当前的包级约束，并非通用沙箱对比，也不是待办事项清单。
 
 - **每个会话只有一个主要工作区根目录**——策略解析 `SessionHeader.cwd`；额外可写根目录不属于 `SandboxExecutionPolicy`。
-- **仅限文件操作模式**——`SandboxMode` 管控文件操作；网络和进程策略不在其词汇中，因此这里没有限制它们的旋钮。
+- **仅限文件操作模式**——`SandboxMode` 管控文件操作；网络轴是本包同样解析的独立逐调用承诺（部署基线加预设锁），而进程可见性仍在两者之外。
 - **有意概述临时区域**——强制执行后端会授予不同的平台临时区域，这些区域在策略解析后才会选定，因此无法在当前上下文中如实枚举。
 
 <a id="dev-note"></a>

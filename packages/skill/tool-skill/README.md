@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents can discover and load skills during a session. Before the first request, when model-invocable skills exist and the `skill` tool is visible, they receive a durable catalog of available skill names and capped descriptions, and can use the `skill` tool to load full instructions. Users can invoke a user-invocable skill with `/name`, which injects the same instructions into that step. Catalog changes append a complete replacement, including an empty catalog that retires old names; configure `catalogDescriptionMaxLength` to limit each description. Set `publishCatalog` to `false` to never publish a catalog at all — a previously published one then retires from each step window — while the `skill` loader and the `/name` gesture stay available. With `publishCatalog` `false`, listing names in `alwaysInclude` instead publishes a curated catalog of exactly those visible, model-invocable names at every step boundary — a set that no longer resolves retires it again; with the `true` default the key has no effect.
+Before the first request, when a model-invocable skill exists and the `skill` tool is visible, the agent receives a durable catalog of skill names and capped descriptions, loading full instructions with the `skill` tool; a user invokes with `/name`. Catalog changes append a complete replacement (an empty one retires old names); `catalogDescriptionMaxLength` caps each description. `publishCatalog: false` never publishes one (a previously published one retires; the `skill` loader and `/name` stay), and then `alwaysInclude` publishes a curated catalog of exactly the visible model-invocable names it lists, retiring it when none resolve; the `true` default ignores the key.
 
 ## Table of Contents
 

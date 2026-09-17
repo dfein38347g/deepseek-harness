@@ -1859,12 +1859,14 @@ export interface Config {
    * (default: `inherit` — the historical behavior, in which file
    * confinement never claimed the network). `none` moves each confined
    * process into a fresh, empty network namespace: no routes, no
-   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design — a
-   * deployment that wants to air-gap its agents (e.g. a red-team
-   * quarantine preset) opts in here, and it is deliberately NOT a
-   * per-session override or an `sandbox_permissions` escape hatch.
-   * Enforceability is the runner's business: bubblewrap expresses it
-   * (`--unshare-net`); the other rungs fail closed.
+   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design: this
+   * value is the deployment floor, a preset may additionally lock its own
+   * sessions to `none` by mounting the `./network-lock` plugin (the only
+   * per-session writer — it can only tighten, never loosen), and the axis
+   * is deliberately NOT a per-call override, a model choice, or an
+   * `sandbox_permissions` escape hatch. Enforceability is the runner's
+   * business: bubblewrap expresses it (`--unshare-net`); the other rungs
+   * fail closed.
    */
   network?: SandboxNetworkMode
 }

@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode, setSandboxNetwork } from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 
@@ -253,6 +253,18 @@ describe('sandbox:policy request context', () => {
       + 'Unix-socket paths that remain visible in the filesystem view are the only exception by construction.',
     )
   })
+
+  it('appends the network stance to the context for a session the preset locked, although the deployment axis is inherit', async () => {
+    const ctx = await promptMounted({ mode: 'read-only', workspaceRoot: '/fallback' })
+    const active = session('sess-net-locked', '/projects/current')
+    setSandboxNetwork(active, 'none')
+    expect(await policyContext(ctx, active)).toBe(
+      'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. '
+      + 'Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+      + 'Current DSH network policy: none. This session\'s confined processes run in a fresh, empty network namespace: no interfaces, no routes, no DNS — network access is structurally unavailable and network attempts fail. '
+      + 'Unix-socket paths that remain visible in the filesystem view are the only exception by construction.',
+    )
+  })
 })
 
 describe('the sandbox/mode session kit', () => {
@@ -275,5 +287,65 @@ describe('the sandbox/mode session kit', () => {
     const modeEvents = session.snapshotEvents().filter(e => e.type === 'sandbox/mode')
     expect(modeEvents).toHaveLength(1)
     expect(modeEvents[0]?.data).toEqual({ mode: 'danger-full-access' })
+  })
+})
+
+describe('the sandbox/network session kit (the preset lock)', () => {
+  it('setSandboxNetwork appends exactly one sandbox/network event per lock', () => {
+    const session = Session.create(SessionId('sess-net-lock'))
+    setSandboxNetwork(session, 'none')
+    const networkEvents = session.snapshotEvents().filter(e => e.type === 'sandbox/network')
+    expect(networkEvents).toHaveLength(1)
+    expect(networkEvents[0]?.data).toEqual({ network: 'none' })
+  })
+
+  it('the sandboxNetwork projection folds to the last lock, or null without one', async () => {
+    const ctx = await mounted()
+    const session = Session.create(SessionId('sess-net-fold'))
+    expect(ctx.sessionProjections.stateOf(session, 'sandboxNetwork')).toBeNull()
+    setSandboxNetwork(session, 'none')
+    setSandboxNetwork(session, 'inherit')
+    setSandboxNetwork(session, 'none')
+    expect(ctx.sessionProjections.stateOf(session, 'sandboxNetwork')).toBe('none')
+  })
+
+  it('a preset lock tightens a session to none over a deployment inherit, and never loosens a deployment none', async () => {
+    const inherit = await mounted()
+    const locked = session('sess-locked', '/projects/locked')
+    setSandboxNetwork(locked, 'none')
+    expect(inherit.sandboxPolicy.resolve({ session: locked })).toEqual({
+      mode: 'read-only',
+      network: 'none',
+      workspaceRoot: resolve('/projects/locked'),
+      sessionId: 'sess-locked',
+    })
+    // The lock is per session: a sibling session of the same deployment stays inherit.
+    expect(inherit.sandboxPolicy.resolve({ session: session('sess-unlocked', '/projects/other') }).network).toBe('inherit')
+    expect(inherit.sandboxPolicy.resolve().network).toBe('inherit')
+
+    const deploymentNone = await mounted({ network: 'none' })
+    const relaxed = session('sess-relaxed', '/projects/relaxed')
+    setSandboxNetwork(relaxed, 'inherit')
+    expect(deploymentNone.sandboxPolicy.resolve({ session: relaxed }).network).toBe('none')
+  })
+
+  it('an approved mode override leaves the locked network axis untouched', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    const active = session('sess-locked-mode', '/projects/locked-mode')
+    setSandboxNetwork(active, 'none')
+    expect(ctx.sandboxPolicy.resolve({ session: active, mode: 'read-only' })).toEqual({
+      mode: 'read-only',
+      network: 'none',
+      workspaceRoot: resolve('/projects/locked-mode'),
+      sessionId: 'sess-locked-mode',
+    })
+  })
+
+  it('reconstructs a resumed session network lock from the session log', async () => {
+    const active = session('sess-resumed-lock', '/projects/current')
+    setSandboxNetwork(active, 'none')
+    const resumed = Session.create(active.id, active.snapshotEvents(), active.header)
+    const ctx = await mounted()
+    expect(ctx.sandboxPolicy.resolve({ session: resumed }).network).toBe('none')
   })
 })

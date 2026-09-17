@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-agent 可以在会话期间发现并加载 skill。在首次请求前，如果存在模型可调用 skill 且 `skill` 工具可见，agent 会收到一份持久目录，列出可用 skill 的名称与有长度上限的描述，并可用 `skill` 工具加载完整指令。用户可以用 `/name` 调用某个用户可调用的 skill，把相同的指令注入该步骤。目录变更会追加一份完整替换，其中空目录会停用旧名称；可配置 `catalogDescriptionMaxLength` 来限制每条描述的长度。将 `publishCatalog` 设为 `false` 则完全不发布目录——此前发布的目录会从每个步骤窗口中退役——而 `skill` 加载器与 `/name` 手势保持可用。`publishCatalog` 为 `false` 时，在 `alwaysInclude` 中列出名称，则改为在每个步骤边界发布一份恰好包含这些可见且模型可调用的名称的精选目录——当该集合不再解析出任何 skill 时目录再次退役；`true` 默认值下该键无效。
+在首次请求前，如果存在模型可调用 skill 且 `skill` 工具可见，agent 会收到一份持久目录，列出可用 skill 的名称与有长度上限的描述，并可用 `skill` 工具加载完整指令；用户可以用 `/name` 调用某个用户可调用的 skill。目录变更会追加一份完整替换——空目录会停用旧名称。`catalogDescriptionMaxLength` 限制每条描述的长度。将 `publishCatalog` 设为 `false` 则完全不发布目录——此前发布的目录随之退役——而 `skill` 加载器与 `/name` 手势保持可用；此时 `alwaysInclude` 改为在每个步骤边界发布一份恰好列出这些可见且模型可调用的名称的精选目录——当该集合不再解析出任何 skill 时目录再次退役；`true` 默认值下该键无效。
 
 ## 目录
 

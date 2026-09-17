@@ -1,10 +1,15 @@
 /**
  * The sandbox POLICY home (`ctx.sandboxPolicy`): the single owner of the
  * deployment's sandbox fallbacks plus per-session resolution: the file-effect
- * {@link SandboxMode}, the `workspace-write` root, and the override kit (the
- * `sandbox/mode` event, its fold, and its write path; the fold is the
- * `sandboxMode` session-projection unit registered here, while the event and
- * write path come from `./session-mode.ts`).
+ * {@link SandboxMode}, the network axis ({@link SandboxNetworkMode}), the
+ * `workspace-write` root, and the override kit. The mode override is the
+ * `sandbox/mode` event and its fold (the `sandboxMode` session-projection
+ * unit registered here; the event and write path come from
+ * `./session-mode.ts`). The network lock is the `sandbox/network` event and
+ * its fold (the `sandboxNetwork` projection unit registered here; the
+ * write path in `./session-network.ts`), whose ONLY writer is the
+ * preset-mounted `./network-lock.ts` plugin — a static preset row, never a
+ * runtime decision.
  * Before each agent request, the owner also contributes the resolved policy to
  * the cache-safe runtime-context snapshot. The agent loop logs that snapshot as
  * model history, so replay reconstructs the same mode and root the enforcing
@@ -31,6 +36,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 
 export { SANDBOX_MODES, setSandboxMode } from './session-mode.ts'
+export { setSandboxNetwork } from './session-network.ts'
 
 /** Resolve filesystem identity before lexical normalization can erase symlink-sensitive components. */
 function resolveWorkspaceRoot(path: string): string {
@@ -87,12 +93,14 @@ export interface Config {
    * (default: `inherit` — the historical behavior, in which file
    * confinement never claimed the network). `none` moves each confined
    * process into a fresh, empty network namespace: no routes, no
-   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design — a
-   * deployment that wants to air-gap its agents (e.g. a red-team
-   * quarantine preset) opts in here, and it is deliberately NOT a
-   * per-session override or an `sandbox_permissions` escape hatch.
-   * Enforceability is the runner's business: bubblewrap expresses it
-   * (`--unshare-net`); the other rungs fail closed.
+   * interfaces, no DNS. The axis is DEPLOYMENT-LEVEL by design: this
+   * value is the deployment floor, a preset may additionally lock its own
+   * sessions to `none` by mounting the `./network-lock` plugin (the only
+   * per-session writer — it can only tighten, never loosen), and the axis
+   * is deliberately NOT a per-call override, a model choice, or an
+   * `sandbox_permissions` escape hatch. Enforceability is the runner's
+   * business: bubblewrap expresses it (`--unshare-net`); the other rungs
+   * fail closed.
    */
   network?: SandboxNetworkMode
 }
@@ -113,18 +121,29 @@ const sandboxModeStateSchema = zod.union([
 ]).nullable()
 
 type SandboxModeState = zod.infer<typeof sandboxModeStateSchema>
+
+/** The network-axis projection's state schema (state equals the public shape). */
+const sandboxNetworkStateSchema = zod.union([
+  zod.literal('inherit'),
+  zod.literal('none'),
+]).nullable()
+
+type SandboxNetworkState = zod.infer<typeof sandboxNetworkStateSchema>
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     /** Last logged sandbox-mode override, or null before one (deployment default applies at resolve time). */
     sandboxMode: SandboxModeState
+    /** Last logged network-axis lock, or null before one (the deployment floor applies at resolve time). */
+    sandboxNetwork: SandboxNetworkState
   }
 }
 
 /**
  * The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment
- * default mode, fallback workspace root, and current request-time policy
- * section. Tool layers call {@link resolve} for each execution so a session's
- * mode log and immutable cwd travel together to every enforcing capability.
+ * default mode, the network axis, the fallback workspace root, and the
+ * current request-time policy section. Tool layers call {@link resolve} for
+ * each execution so a session's mode log, network lock, and immutable cwd
+ * travel together to every enforcing capability.
  */
 export class SandboxPolicyService extends Service {
   // Inline schema call: the config catalog walks `static Config` statically.
@@ -140,7 +159,11 @@ export class SandboxPolicyService extends Service {
 
   /** The deployment default mode — the fallback beneath a session override. */
   readonly defaultMode: SandboxMode
-  /** The deployment network axis — deployment-level by design, never per call. */
+  /**
+   * The deployment network axis — the deployment-level floor; a preset's
+   * mount-time network lock may pin individual sessions further to `none`,
+   * never per call.
+   */
   readonly defaultNetwork: SandboxNetworkMode
   /** The absolute `workspace-write` fallback root for calls without a session cwd. */
   readonly workspaceRoot: string
@@ -159,6 +182,14 @@ export class SandboxPolicyService extends Service {
       stateSchema: sandboxModeStateSchema,
       init: () => null,
       apply: (state, event) => (event.type === 'sandbox/mode' ? event.data.mode : state),
+    })
+
+    ctx.sessionProjections.register({
+      key: 'sandboxNetwork',
+      stateVersion: 1,
+      stateSchema: sandboxNetworkStateSchema,
+      init: () => null,
+      apply: (state, event) => (event.type === 'sandbox/network' ? event.data.network : state),
     })
 
     ctx.inject(['systemPrompt'], (scope: Context) => {
@@ -180,8 +211,9 @@ export class SandboxPolicyService extends Service {
    * mode outranks the session's last `sandbox/mode` event, which outranks the
    * deployment default. A session cwd is its workspace-write boundary; the
    * configured root is the fallback for agentless calls and sessions without a
-   * cwd. The network axis is the deployment default — deliberately NOT a
-   * per-call or per-session override.
+   * cwd. The network axis resolves to the stricter of the deployment floor
+   * and the session's preset network lock — deliberately NOT a per-call
+   * override, a model choice, or a runtime switch.
    * @param request - optional session and approved mode override.
    * @returns the fully resolved per-call mode, network axis, and absolute workspace root.
    */
@@ -189,7 +221,7 @@ export class SandboxPolicyService extends Service {
     const { session } = request
     return {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
-      network: this.defaultNetwork,
+      network: this.networkOf(session),
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }
@@ -202,6 +234,21 @@ export class SandboxPolicyService extends Service {
    */
   overrideOf(session: Session): SandboxMode | undefined {
     return this.ctx.sessionProjections.stateOf(session, 'sandboxMode') ?? undefined
+  }
+
+  /**
+   * Resolve the network axis for one call: the stricter of the deployment
+   * floor and the session's last `sandbox/network` event (the preset network
+   * lock). `none` wins from either source, so a lock tightens but never
+   * loosens, and an agentless call runs under the deployment axis alone.
+   * @param session - session whose log may carry the preset lock, or
+   *   `undefined` for an agentless call.
+   * @returns the axis every confined process in this call runs under.
+   */
+  private networkOf(session: Session | undefined): SandboxNetworkMode {
+    if (this.defaultNetwork === 'none') return 'none'
+    if (session === undefined) return this.defaultNetwork
+    return this.ctx.sessionProjections.stateOf(session, 'sandboxNetwork') ?? this.defaultNetwork
   }
 }
 

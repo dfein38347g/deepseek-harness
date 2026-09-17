@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to apply one file-effect policy to every confined bash, filesystem, and terminal call. Deployments choose a default mode and fallback workspace root, while each session can switch modes independently. Session choices survive restart, and all enforcing capabilities use the same mode and workspace for a call. Before each model request, the model receives the effective policy and workspace without an inventory of mounted capabilities.
+Use this package to apply one file-effect policy to every confined bash, filesystem, and terminal call. Deployments choose a default mode and fallback workspace root, while each session can switch modes independently. A deployment may also fix the network axis for every confined process, and a preset may lock its own sessions further to the air-gapped value with the package's mount-time network lock. Session choices survive restart, and all enforcing capabilities use the same mode and workspace for a call. Before each model request, the model receives the effective policy and workspace without an inventory of mounted capabilities.
 
 ## Table of Contents
 
@@ -46,6 +46,7 @@ Load the package with a default mode; the fail-safe default is `read-only`, and 
 |---|---|---|
 | `mode` | `read-only` | The deployment default mode a session starts from, validated at load |
 | `workspaceRoot` | `process.cwd()` | The fallback root `workspace-write` may write under for agentless calls or sessions without a cwd; normal agent calls use the session's immutable cwd instead |
+| `network` | `inherit` | The deployment's network-axis floor: `none` moves every confined process into a fresh, empty network namespace. A preset may additionally lock its own sessions to `none` by mounting the `./network-lock` plugin row — the lock can only tighten, never loosen |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-sandbox-policy) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -53,9 +54,19 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 A session's mode can be switched at runtime through a UI policy control or an explicit switch; the switch is recorded in the session log and takes effect on the session's next confined call. The switch survives restart through replay, and each session keeps its own mode — two sessions never see each other's state. A switched session keeps its immutable workspace cwd as the writable boundary.
 
+### Locking a session's network (the preset network lock)
+
+The `./network-lock` subpath is a mount-time plugin row for presets that must run air-gapped. Mounted with `network: none`, it locks every session the mounting preset's agent publishes to the `none` axis: a single `sandbox/network` event appended to the session log, so the lock survives restart by replay, and the resolved policy — and the model's current policy context — reflect it for the locked session only. The row can only tighten: the deployment's own `network` floor still applies to everything, a locked session cannot loosen it, and a configuration value outside `inherit`/`none` throws at mount instead of silently releasing a quarantine preset.
+
+```yaml
+- name: '@deepseek-ai/dsh-sandbox-policy/network-lock'
+  config:
+    network: none
+```
+
 ### Failures and recovery
 
-An invalid configured mode is rejected when the plugin loads, so a typo fails loud instead of silently changing policy. A session without a cwd, and agentless calls, fall back to the configured workspace root; a call with an approved explicit mode uses that mode for exactly that call.
+An invalid configured mode is rejected when the plugin loads, and an invalid network-lock configuration throws at mount, so a typo fails loud instead of silently changing policy or releasing a quarantine preset. A session without a cwd, and agentless calls, fall back to the configured workspace root; a call with an approved explicit mode uses that mode for exactly that call.
 
 -----
 
@@ -69,11 +80,11 @@ This section explains policy resolution, the per-session store, and the model-vi
 
 ### Resolution precedence
 
-`resolve({ session, mode })` returns one complete per-call policy: an approved explicit mode outranks the session's last `sandbox/mode` event, which outranks the deployment default. The session's immutable `cwd` is canonicalized with filesystem semantics before becoming the workspace root, so `symlink/..` agrees with process working-directory resolution; otherwise the configured fallback applies.
+`resolve({ session, mode })` returns one complete per-call policy: an approved explicit mode outranks the session's last `sandbox/mode` event, which outranks the deployment default. The network axis resolves to the stricter of the deployment floor and the session's last `sandbox/network` event (the preset lock) — `none` wins from either source. The session's immutable `cwd` is canonicalized with filesystem semantics before becoming the workspace root, so `symlink/..` agrees with process working-directory resolution; otherwise the configured fallback applies.
 
 ### The per-session store
 
-A runtime switch is one log-only `sandbox/mode` event on the session it applies to — the switch IS its event, and nothing mutates mode state out of band. `effective = explicit grant ?? fold(events) ?? deployment default`, so an override survives restart by replay and two sessions never see each other's state. Workspace identity needs no event: the immutable `SessionHeader.cwd` recorded at creation is the root for every call in that session. The event stays log-only; before each request, the owner contributes the current fact to the full runtime-context snapshot, and the agent loop logs that snapshot as a sourced `user/message`.
+A runtime switch is one log-only `sandbox/mode` event on the session it applies to — the switch IS its event, and nothing mutates mode state out of band. `effective = explicit grant ?? fold(events) ?? deployment default`, so an override survives restart by replay and two sessions never see each other's state. Workspace identity needs no event: the immutable `SessionHeader.cwd` recorded at creation is the root for every call in that session. The preset network lock is the same shape: one log-only `sandbox/network` event per locked session, written only by the `./network-lock` plugin's `session/created` listener — the lock has no other write path, and no runtime switch can loosen it. The events stay log-only; before each request, the owner contributes the current facts to the full runtime-context snapshot, and the agent loop logs that snapshot as a sourced `user/message`.
 
 ### Model-visible text
 
@@ -85,6 +96,8 @@ The `sandbox:policy` contribution states the mode's capability-neutral file-effe
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `SandboxPolicyService`, `Config` schema, policy resolution and context contribution |
 | [`src/session-mode.ts`](src/session-mode.ts) | The `sandbox/mode` event, its fold, and the write path |
+| [`src/session-network.ts`](src/session-network.ts) | The `sandbox/network` event and its write path (the preset lock's only writer) |
+| [`src/network-lock.ts`](src/network-lock.ts) | The mount-time preset network-lock plugin (the `./network-lock` subpath) |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion: rejects `sandbox/mode` values outside the closed vocabulary |
 
 </details>
@@ -145,7 +158,7 @@ The stable system prompt remains byte-identical across mode changes. A changed f
 These limits define the policy surface this package provides. They are current package constraints, not a general sandbox comparison or a task backlog.
 
 - **One primary workspace root per session** — policy resolves `SessionHeader.cwd`; extra writable roots are not part of `SandboxExecutionPolicy`.
-- **File-effect modes only** — `SandboxMode` governs file effects; network and process policy are outside its vocabulary, so no knob here restricts them.
+- **File-effect modes only** — `SandboxMode` governs file effects; the network axis is a separate per-call promise this package also resolves (the deployment floor plus the preset lock), while process visibility stays outside both.
 - **Temporary areas are deliberately summarized** — enforcing backends grant different platform temporary areas, which are selected after policy resolution and therefore cannot be enumerated truthfully in the current context.
 
 <a id="dev-note"></a>

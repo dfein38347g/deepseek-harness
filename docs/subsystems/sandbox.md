@@ -45,7 +45,10 @@ The network axis rides the same per-call policy but is its own promise: `inherit
  * requested (no silent passthrough). The axis does NOT govern unix sockets:
  * they live in the mount namespace, so a `none` process can still reach
  * socket paths left visible in its filesystem view — callers that need
- * unix-plane isolation curate their binds.
+ * unix-plane isolation curate their binds. A preset may additionally pin
+ * individual sessions to `none` via the mount-time network lock
+ * (`dsh-sandbox-policy/network-lock`); once locked, no runtime path
+ * loosens the axis.
  */
 type SandboxNetworkMode = 'inherit' | 'none'
 ```
@@ -75,9 +78,10 @@ interface SandboxExecutionPolicy {
   /** The file-effect mode this execution runs under. */
   mode: SandboxMode
   /**
-   * The network axis this execution runs under. Resolution fills the
-   * deployment default (it is never an approved per-call override); a
-   * `danger-full-access` execution runs unconfined on both axes.
+   * The network axis this execution runs under: the stricter of the
+   * deployment default and any preset network lock the session's log
+   * carries — never an approved per-call override, and never loosenable at
+   * runtime. A `danger-full-access` execution runs unconfined on both axes.
    */
   network: SandboxNetworkMode
   /** Absolute root directory `workspace-write` may write under. */
@@ -221,7 +225,7 @@ Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox
 
 ### `ctx.sandboxPolicy` — `SandboxPolicyService`
 
-The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mode, fallback workspace root, and current request-time policy section. Tool layers call resolve for each execution so a session's mode log and immutable cwd travel together to every enforcing capability.
+The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mode, the network axis, the fallback workspace root, and the current request-time policy section. Tool layers call resolve for each execution so a session's mode log, network lock, and immutable cwd travel together to every enforcing capability.
 
 ```ts cordis-catalog
 /**
@@ -229,8 +233,9 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
  * mode outranks the session's last `sandbox/mode` event, which outranks the
  * deployment default. A session cwd is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
- * cwd. The network axis is the deployment default — deliberately NOT a
- * per-call or per-session override.
+ * cwd. The network axis resolves to the stricter of the deployment floor
+ * and the session's preset network lock — deliberately NOT a per-call
+ * override, a model choice, or a runtime switch.
  * @param request - optional session and approved mode override.
  * @returns the fully resolved per-call mode, network axis, and absolute workspace root.
  */
