@@ -345,6 +345,7 @@
       "@deepseek-ai/dsh-sandbox-local": ["./packages/sandbox/sandbox-local/src"],
       "@deepseek-ai/dsh-sandbox-policy": ["./packages/sandbox/sandbox-policy/src"],
       "@deepseek-ai/dsh-sandbox-policy/invariant": ["./packages/sandbox/sandbox-policy/src/invariant.ts"],
+      "@deepseek-ai/dsh-sandbox-policy/network-lock": ["./packages/sandbox/sandbox-policy/src/network-lock.ts"],
       "@deepseek-ai/dsh-sandbox-windows-acl": ["./packages/sandbox/sandbox-windows-acl/src"],
       "@deepseek-ai/dsh-schedule": ["./packages/schedule/schedule/src"],
       "@deepseek-ai/dsh-schedule/invariant": ["./packages/schedule/schedule/src/invariant.ts"],
