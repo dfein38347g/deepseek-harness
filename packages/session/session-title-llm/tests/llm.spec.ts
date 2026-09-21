@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import LlmRuntime, { createUserMessage, ToolCallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
-import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, ToolCallId, isAgentLoopRequest, LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { FinishReason, GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
@@ -27,6 +27,17 @@ class RecordingAdapter extends LlmAdapter {
     this.onDispatch?.()
     this.requests.push(options)
     yield * this.script
+  }
+}
+
+class ReasoningRecordingAdapter extends RecordingAdapter {
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return {
+      provider,
+      id: model,
+      name: model,
+      reasoning: { efforts: [{ id: ReasoningEffortId('off'), name: 'off' }] },
+    }
   }
 }
 
@@ -204,6 +215,69 @@ describe('generateSessionTitleWithLlm', () => {
     })
   })
 
+  it('passes a configured reasoningEffort through to the auxiliary call and omits it otherwise', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    const adapter = new ReasoningRecordingAdapter(SCRIPT)
+    ctx.llm.registerAdapter(['current-route'], adapter)
+    const offRequest = request(ctx)
+    await generateSessionTitleWithLlm(
+      ctx,
+      resolveSessionTitleLlmConfig({ ...CONFIG, reasoningEffort: 'off' }),
+      offRequest,
+      offRequest.messages,
+      TITLE_PROVIDER,
+    )
+    expect(adapter.requests[0]).toMatchObject({ reasoningEffort: 'off' })
+    expect(offRequest.session.snapshotEvents().findLast(event => event.type === 'session/title-llm-request')?.data)
+      .toMatchObject({ reasoningEffort: 'off' })
+
+    const withoutEffort = await withScript(SCRIPT)
+    const plainRequest = request(withoutEffort.ctx)
+    await generateSessionTitleWithLlm(
+      withoutEffort.ctx,
+      resolveSessionTitleLlmConfig(CONFIG),
+      plainRequest,
+      plainRequest.messages,
+      TITLE_PROVIDER,
+    )
+    expect(withoutEffort.adapter.requests[0]!.reasoningEffort).toBeUndefined()
+  })
+
+  it('drops a configured reasoningEffort the target model does not support instead of failing', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    const adapter = new ReasoningRecordingAdapter(SCRIPT)
+    ctx.llm.registerAdapter(['current-route'], adapter)
+    const config = resolveSessionTitleLlmConfig({ ...CONFIG, reasoningEffort: 'high' })
+    const providerRequest = request(ctx)
+    const result = await generateSessionTitleWithLlm(
+      ctx,
+      config,
+      providerRequest,
+      providerRequest.messages,
+      TITLE_PROVIDER,
+    )
+    expect(result.title).toBe('五个字标题')
+    expect(adapter.requests[0]!.reasoningEffort).toBeUndefined()
+    expect(providerRequest.session.snapshotEvents().findLast(event => event.type === 'session/title-llm-request')?.data)
+      .not.toHaveProperty('reasoningEffort')
+
+    const nonReasoning = await withScript(SCRIPT)
+    const nonReasoningRequest = request(nonReasoning.ctx)
+    const nonReasoningResult = await generateSessionTitleWithLlm(
+      nonReasoning.ctx,
+      config,
+      nonReasoningRequest,
+      nonReasoningRequest.messages,
+      TITLE_PROVIDER,
+    )
+    expect(nonReasoningResult.title).toBe('五个字标题')
+    expect(nonReasoning.adapter.requests[0]!.reasoningEffort).toBeUndefined()
+  })
+
   it('requires every deployment limit and a complete optional route pair', () => {
     expect(() => resolveSessionTitleLlmConfig(undefined as never)).toThrow(/configuration is required/)
     expect(() => resolveSessionTitleLlmConfig(null as never)).toThrow(/configuration is required/)
@@ -226,6 +300,10 @@ describe('generateSessionTitleWithLlm', () => {
       .toThrow(/overrides must be non-empty strings/)
     expect(() => resolveSessionTitleLlmConfig({ ...CONFIG, provider: 'provider', model: 1 } as never))
       .toThrow(/overrides must be non-empty strings/)
+    expect(() => resolveSessionTitleLlmConfig({ ...CONFIG, reasoningEffort: '' }))
+      .toThrow(/reasoningEffort must be a non-empty string/)
+    expect(() => resolveSessionTitleLlmConfig({ ...CONFIG, reasoningEffort: 1 } as never))
+      .toThrow(/reasoningEffort must be a non-empty string/)
     expect(() => resolveSessionTitleLlmConfig({ ...CONFIG, timeoutMs: MAX_TIMER_DELAY_MS + 1 }))
       .toThrow(/timeoutMs must not exceed/)
     expect(() => resolveSessionTitleLlmConfig(CONFIG)).not.toThrow()

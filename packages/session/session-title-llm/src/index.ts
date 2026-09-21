@@ -6,7 +6,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { createUserMessage, BlockAssembler } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, BlockAssembler, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
@@ -37,6 +37,8 @@ export interface SessionTitleLlmRequestEventData {
   readonly messages: Message[]
   /** Exact auxiliary output-token cap. */
   readonly maxTokens: number
+  /** Resolved auxiliary reasoning effort, when the target model supports one. */
+  readonly reasoningEffort?: string
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -65,6 +67,13 @@ export interface SessionTitleLlmConfig {
   readonly provider?: string
   /** Optional explicit model id; must be paired with `provider`. */
   readonly model?: string
+  /**
+   * Optional exact reasoning effort for the auxiliary call. Omitted by
+   * default, in which case the provider profile's own default applies; set
+   * to a model-supported effort such as `off` when a reasoning main model
+   * must not spend the small output budget on thinking.
+   */
+  readonly reasoningEffort?: string
 }
 
 /** Validated immutable model-provider policy. */
@@ -79,6 +88,7 @@ export const SessionTitleLlmConfigFields = {
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).required(),
   provider: z.string(),
   model: z.string(),
+  reasoningEffort: z.string(),
 }
 
 /** Shared Loader schema with no library defaults. */
@@ -93,6 +103,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   'timeoutMs',
   'provider',
   'model',
+  'reasoningEffort',
 ])
 
 /** Validate one positive integer limit. */
@@ -135,6 +146,10 @@ export function resolveSessionTitleLlmConfig(
     && (typeof value.provider !== 'string' || value.provider.length === 0
       || typeof value.model !== 'string' || value.model.length === 0)) {
     throw new Error('session-title-llm: provider and model overrides must be non-empty strings')
+  }
+  if (value.reasoningEffort !== undefined
+    && (typeof value.reasoningEffort !== 'string' || value.reasoningEffort.length === 0)) {
+    throw new Error('session-title-llm: reasoningEffort must be a non-empty string')
   }
   return deepFreeze({ ...value })
 }
@@ -182,6 +197,29 @@ function resolveRoute(
     throw new Error('session-title-llm: no logged request route is available; configure provider and model together')
   }
   return request.route
+}
+
+/**
+ * Resolve the configured effort against the exact target model. A model
+ * without reasoning metadata, or one that does not list the configured
+ * effort, falls back to the provider's own default instead of failing the
+ * auxiliary call.
+ * @param ctx - context exposing the registered LLM service.
+ * @param route - exact auxiliary LLM route to inspect.
+ * @param configured - deployment-configured effort, or nothing to check.
+ * @param signal - caller cancellation shared with the dispatch.
+ * @returns the effort to send, or nothing to send.
+ */
+async function resolveReasoningEffort(
+  ctx: Context,
+  route: SessionTitleModelProvenance,
+  configured: string | undefined,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  if (configured === undefined) return undefined
+  const info = await ctx.llm.resolveModelInfo(route.provider, route.model, signal)
+  if (info.reasoning === undefined) return undefined
+  return info.reasoning.efforts.some(effort => effort.id === configured) ? configured : undefined
 }
 
 /** Stable language-aware system instruction shared by both provider plugins. */
@@ -245,6 +283,7 @@ export async function generateSessionTitleWithLlm(
     throw new Error(`session-title-llm: input is ${inputBytes} bytes, exceeding maxInputBytes ${config.maxInputBytes}`)
   }
   const route = resolveRoute(config, request)
+  const reasoningEffort = await resolveReasoningEffort(ctx, route, config.reasoningEffort, request.signal)
   const messages: Message[] = [createUserMessage({
     content: [{ type: 'text', text: framedInput }],
     source: { kind: 'plugin', plugin: 'dsh-session-title-llm' },
@@ -254,6 +293,7 @@ export async function generateSessionTitleWithLlm(
   const options: GenerateOptions = deepFreeze({
     provider: route.provider,
     model: route.model,
+    ...reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
     messages,
     system,
     maxTokens: config.maxOutputTokens,
@@ -268,6 +308,7 @@ export async function generateSessionTitleWithLlm(
     system,
     messages,
     maxTokens: config.maxOutputTokens,
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
   })
   callDeadline.signal.throwIfAborted()
   const assembler = new BlockAssembler()
