@@ -336,8 +336,8 @@ class ClientRemoteService extends Service implements ClientRemote {
         if (!method.token.active) continue
         method.token.active = false
         method.token.abort.abort()
-        if (method.scoped) handle.service.remove('scoped', method.descriptor.method, method.token)
-        if (method.direct) handle.service.remove('direct', method.descriptor.method, method.token)
+        if (method.scoped) handle.service.uninstall('scoped', method.descriptor.method, method.token)
+        if (method.direct) handle.service.uninstall('direct', method.descriptor.method, method.token)
       }
       await this.disposeNamespace(name, handle)
     }
@@ -598,7 +598,7 @@ class RemoteNamespaceService extends Service {
     else record.scoped = value as ScopedMethod
   }
 
-  remove(kind: 'direct' | 'scoped', method: string, token: MountToken): void {
+  uninstall(kind: 'direct' | 'scoped', method: string, token: MountToken): void {
     const record = this.methods.get(method)
     const current = record?.[kind]
     /* v8 ignore next -- duplicate live variants are rejected before installation, so no newer token can replace this one. */
@@ -646,8 +646,8 @@ function installMethods(
     for (const method of [...installed].reverse()) {
       method.token.active = false
       method.token.abort.abort()
-      if (method.scoped) service.remove('scoped', method.descriptor.method, method.token)
-      if (method.direct) service.remove('direct', method.descriptor.method, method.token)
+      if (method.scoped) service.uninstall('scoped', method.descriptor.method, method.token)
+      if (method.direct) service.uninstall('direct', method.descriptor.method, method.token)
     }
     throw error
   }

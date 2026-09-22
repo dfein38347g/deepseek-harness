@@ -915,8 +915,13 @@ describe('Client Typert API', () => {
     })).rejects.toThrow('scoped method probe/rename is already mounted')
     await expect(ctx.remote.$mount({
       package: '@fixture/service-method-conflict',
-      descriptors: [{ ...context, id: '@fixture/probe#probe/remove', method: 'remove' }],
+      descriptors: [{ ...context, id: '@fixture/probe#probe/has', method: 'has' }],
     })).rejects.toThrow('conflicts with its namespace service')
+    const disposeRemoved = await ctx.remote.$mount({
+      package: '@fixture/method-named-remove',
+      descriptors: [{ ...context, id: '@fixture/probe#probe/remove', method: 'remove' }],
+    })
+    await disposeRemoved()
     const scopedService = ctx.get('remote.probe') as unknown as object
     Object.defineProperty(scopedService, 'custom', { configurable: true, value: () => undefined })
     await expect(ctx.remote.$mount({
