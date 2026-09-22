@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
-  IconBranchOutline16, IconCheckOutline16, IconCopyOutline16, Tooltip, writeClipboard,
+  IconBranchOutline16, IconCheckOutline16, IconCopyOutline16, IconRollbackOutline16, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import { formatMessageClock } from './message-chrome.ts'
@@ -21,6 +21,10 @@ export interface MessageIconActionsProps {
   onBranch?: (() => void) | undefined
   /** The message is not a completed transcript tail, so branch stays visible but unavailable. */
   branchUnavailable?: boolean | undefined
+  /** Roll the session back to this message; omission hides the rollback action. */
+  onRollback?: (() => void) | undefined
+  /** The session is not idle, so rollback stays visible but unavailable. */
+  rollbackUnavailable?: boolean | undefined
   /** Parent layout class composed onto the actions row. */
   className?: string | undefined
   /**
@@ -43,11 +47,12 @@ export interface MessageIconActionsProps {
  * @returns The actions row element.
  */
 export function MessageIconActions({
-  text, time, clock, onBranch, branchUnavailable = false, className,
-  extraActions, usageAction, t,
+  text, time, clock, onBranch, branchUnavailable = false, onRollback, rollbackUnavailable = false,
+  className, extraActions, usageAction, t,
 }: MessageIconActionsProps) {
   const day = useCalendarDay()
   const reasonId = useId()
+  const rollbackReasonId = useId()
   // Same success chrome as CodeBlock: a short check swap after the write,
   // gated so re-clicks during the window neither re-copy nor stack timers.
   const [copied, setCopied] = useState(false)
@@ -82,6 +87,25 @@ export function MessageIconActions({
   return (
     <div className={className === undefined ? css.actions : `${css.actions} ${className}`}>
       {clock === 'start' ? clockEl : null}
+      {onRollback !== undefined && (
+        <Tooltip label={rollbackUnavailable ? t('message.rollbackUnavailable') : t('message.rollback')} side="bottom">
+          {/* Native disabled buttons do not deliver the hover/focus events Tooltip needs. */}
+          <button
+            type="button"
+            className={css.action}
+            aria-label={t('message.rollback')}
+            aria-disabled={rollbackUnavailable || undefined}
+            aria-describedby={rollbackUnavailable ? rollbackReasonId : undefined}
+            data-unavailable={rollbackUnavailable || undefined}
+            onClick={rollbackUnavailable ? undefined : onRollback}
+          >
+            <IconRollbackOutline16 />
+          </button>
+        </Tooltip>
+      )}
+      {onRollback !== undefined && rollbackUnavailable && (
+        <span id={rollbackReasonId} className={css.visuallyHidden}>{t('message.rollbackUnavailable')}</span>
+      )}
       <Tooltip label={copied ? t('copied') : t('copy')} side="bottom">
         <button type="button" className={css.action} aria-label={copied ? t('copied') : t('copy')} onClick={onCopy}>
           {copied ? <IconCheckOutline16 /> : <IconCopyOutline16 />}

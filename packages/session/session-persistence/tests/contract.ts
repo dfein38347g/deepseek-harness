@@ -20,6 +20,7 @@ import {
   SessionAlreadyOwnedError,
   SessionFormatUnsupportedError,
   SessionHandleClosedError,
+  SessionPersistenceActiveHandleError,
   SessionPersistenceNotFoundError,
   SessionReadOnlyError,
 } from '../src/index.ts'
@@ -608,6 +609,86 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         expect(await persistence.stat(SessionId('absent-stat'))).toBeUndefined()
       } finally {
         await dispose()
+      }
+    })
+
+    it('delete removes a stored session: stat, list, and open report absence and the id can be recreated', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('deleted', '/work')
+        const writer = await persistence.create(m)
+        await writer.append(oneTurnLog())
+        await writer.close()
+
+        await persistence.delete(m.id)
+
+        expect(await persistence.stat(m.id)).toBeUndefined()
+        expect((await persistence.list()).some(s => s.header.id === m.id)).toBe(false)
+        await expect(persistence.open(m.id, 'read')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+        await expect(persistence.open(m.id, 'write')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+
+        // The identity is free again: a fresh session may reuse it.
+        const reborn = await persistence.create(m)
+        await reborn.append(oneTurnLog())
+        await reborn.close()
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('delete of an absent session rejects with SessionPersistenceNotFoundError', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        await expect(persistence.delete(SessionId('absent-delete'))).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('delete refuses while a live handle or write claim references the session', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('active-delete')
+        const creator = await persistence.create(m)
+        // A pending session has a live creator handle: no artifact to remove yet.
+        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionPersistenceActiveHandleError)
+        await creator.append(oneTurnLog())
+        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionPersistenceActiveHandleError)
+        await creator.close()
+
+        const reader = await persistence.open(m.id, 'read')
+        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionPersistenceActiveHandleError)
+        await reader.close()
+
+        const writer = await persistence.open(m.id, 'write')
+        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionPersistenceActiveHandleError)
+        await writer.close()
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('delete is visible across instances: a fresh instance cannot reopen the removed session', async () => {
+      const backend = await make()
+      try {
+        if (backend.reopen === undefined) return
+        const m = meta('cross-delete', '/work')
+        const writer = await backend.persistence.create(m)
+        await writer.append(oneTurnLog())
+        await writer.close()
+
+        await backend.persistence.delete(m.id)
+
+        const reopened = await backend.reopen()
+        try {
+          expect(await reopened.persistence.stat(m.id)).toBeUndefined()
+          await expect(reopened.persistence.open(m.id, 'read')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+        } finally {
+          await reopened.dispose()
+        }
+      } finally {
+        await backend.dispose()
       }
     })
   })

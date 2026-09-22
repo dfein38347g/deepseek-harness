@@ -124,6 +124,22 @@ export class SessionForkError extends Error {
   }
 }
 
+/** Structured session-removal failure. */
+export class SessionRemoveError extends Error {
+  override readonly name = 'SessionRemoveError'
+
+  /**
+   * @param rpcError - Host business or folded transport error.
+   * @param sessionId - the session the removal targeted.
+   */
+  constructor(
+    readonly rpcError: RemoteFailure,
+    readonly sessionId: SessionId,
+  ) {
+    super(`session remove failed: ${rpcError.code}: ${rpcError.message}`)
+  }
+}
+
 /** Identity-stable logical binding for one materialized Client Session. */
 export interface SessionBinding {
   readonly sessionId: SessionId
@@ -414,13 +430,15 @@ export class ClientSessions implements ISessions {
    * Fork a session from a completed-turn prefix of the source (same
    * synchronous-addressability guarantee as {@link ClientSessions.create}:
    * on resolution the child is in the list store and open() can target it).
-   * @param opts - source session id, the optional event seq anchoring the
-   *   cut (the boundary is the first turn/end at or after it; an in-log
-   *   anchor in an open turn is unavailable rather than clipped backward),
-   *   and whether to increment an inherited durable title before resolving.
-   *   A fractional anchor floors to a real event seq: the frozen nodes of an
-   *   interrupted turn carry flow-ordering seqs between two events, and the
-   *   wire takes integers only.
+   * @param opts - source session id, an optional event seq anchoring the cut
+   *   (`atSeq`: the boundary is the first turn/end at or after it; an in-log
+   *   anchor in an open turn is unavailable rather than clipped backward —
+   *   `beforeSeq`: the cut falls strictly before the turn containing it, an
+   *   empty prefix when that turn is the source's first), and whether to
+   *   increment an inherited durable title before resolving. A fractional
+   *   anchor floors to a real event seq: the frozen nodes of an interrupted
+   *   turn carry flow-ordering seqs between two events, and the wire takes
+   *   integers only.
    * @returns the child session id.
    * @throws {SessionForkError} with the source id.
    * @throws {Error} when a requested child-title rename fails after creation.
@@ -428,8 +446,12 @@ export class ClientSessions implements ISessions {
   async fork(opts: {
     sessionId: SessionId
     atSeq?: number
+    beforeSeq?: number
     increaseTitle?: boolean
   }): Promise<SessionId> {
+    if (opts.atSeq !== undefined && opts.beforeSeq !== undefined) {
+      throw new Error('fork accepts atSeq or beforeSeq, not both')
+    }
     const sourceTitle = opts.increaseTitle
       ? this.list.getSnapshot().byId[opts.sessionId]?.title
       : undefined
@@ -439,6 +461,7 @@ export class ClientSessions implements ISessions {
       // turn/start), so the host's first-turn/end-at-or-after cut still ends
       // on that turn — never clipped back to the previous one.
       ...(opts.atSeq === undefined ? {} : { atSeq: SessionSeq(Math.floor(opts.atSeq)) }),
+      ...(opts.beforeSeq === undefined ? {} : { beforeSeq: SessionSeq(Math.floor(opts.beforeSeq)) }),
     })
     if (!result.ok) throw new SessionForkError(result.error, opts.sessionId)
     this.projectList()
@@ -449,6 +472,37 @@ export class ClientSessions implements ISessions {
       const renamed = await child.rename(increasedForkTitle(sourceTitle))
       if (!renamed.ok) throw new Error(`fork child rename failed: ${renamed.error.code}: ${renamed.error.message}`)
     }
+    return childId
+  }
+
+  /**
+   * Permanently remove one ordinary session on the host: its idle Agent is
+   * disposed, its Workspace link detached, and its durable log deleted. The
+   * `api-session/removed` relay then drops the summary from the list store.
+   * @param sessionId - the session to remove.
+   * @throws {SessionRemoveError} with the targeted id.
+   */
+  async remove(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.remove(sessionId)
+    if (!result.ok) throw new SessionRemoveError(result.error, sessionId)
+  }
+
+  /**
+   * Roll back the source session to the prefix strictly before the turn
+   * containing the anchor: fork that prefix, select the child, and delete
+   * the source. The child keeps the source's durable title — the original
+   * goes away, so no title increment is needed.
+   * @param opts - source session id and the anchored event seq (the user
+   *   message the conversation is rolled back past).
+   * @returns the child session id, now selected.
+   * @throws {SessionForkError} when the fork fails — nothing is removed.
+   * @throws {SessionRemoveError} when the removal fails — both sessions
+   *   remain, the child selected.
+   */
+  async rollback(opts: { sessionId: SessionId; atSeq: number }): Promise<SessionId> {
+    const childId = await this.fork({ sessionId: opts.sessionId, beforeSeq: opts.atSeq })
+    this.open(childId)
+    await this.remove(opts.sessionId)
     return childId
   }
 

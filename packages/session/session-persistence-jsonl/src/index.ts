@@ -21,11 +21,12 @@ import { randomBytes } from 'node:crypto'
 import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
-  SessionAlreadyExistsError, SessionPersistenceNotFoundError,
+  SessionAlreadyExistsError, SessionPersistenceActiveHandleError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
   type SessionLocation, type SessionPersistenceCreateOptions,
+  type SessionPersistenceDeleteOptions,
   type SessionPersistenceListOptions, type SessionPersistenceOpenOptions,
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
@@ -487,6 +488,46 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     signal?.throwIfAborted()
     return snapshots
+  }
+
+  /**
+   * Permanently remove a stored session and every artifact backing it.
+   *
+   * Refuses while this instance still tracks the session with a live handle
+   * or write claim, then probes the cross-process write lock before removing
+   * the session directory: a holder in another process keeps the session
+   * alive there, and unlinking its directory would orphan its open
+   * descriptor.
+   * @param id - the stored session to remove.
+   * @param options - optional cancellation.
+   * @throws {SessionPersistenceNotFoundError} when the session does not exist.
+   * @throws {SessionPersistenceActiveHandleError} when a live handle or write
+   *   claim for the session is still open on this instance.
+   * @throws {SessionAlreadyOwnedError} when another process holds the
+   *   session's write ownership.
+   */
+  async delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<void> {
+    options?.signal?.throwIfAborted()
+    if (this.tracker.hasActive(id)) throw new SessionPersistenceActiveHandleError(id)
+    const selected = await this.findLog(id, options?.signal)
+    if (selected === undefined) throw new SessionPersistenceNotFoundError(id)
+    const dir = dirname(selected.currentPath)
+    const lease = await SessionWriteLease.acquire(dir, id)
+    try {
+      options?.signal?.throwIfAborted()
+      try {
+        await rm(dir, { recursive: true })
+      } catch (error: unknown) {
+        options?.signal?.throwIfAborted()
+        // The artifact vanished between resolution and removal: the deletion
+        // goal is already met, so resolve instead of surfacing a race.
+        if (!isENOENT(error)) throw error
+      }
+    } finally {
+      await lease.release()
+    }
+    this.coldLogMemo.delete(id)
+    this.migrationPreparations.delete(id)
   }
 
   // --- handle-facing storage internals (package-private via the handle class below) ---

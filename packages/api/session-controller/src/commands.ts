@@ -22,6 +22,7 @@ import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import {
   ApiSessionAgentController,
   ApiSessionCwdConflict,
@@ -43,6 +44,8 @@ import type {
   SessionForkValue,
   SessionPromptRequest,
   SessionPromptValue,
+  SessionRemoveRequest,
+  SessionRemoveValue,
   SessionRenameRequest,
   SessionRenameValue,
   SessionSelectModelRequest,
@@ -196,15 +199,27 @@ export class SessionCommandController {
 
   /**
    * Create a new ordinary Session from one completed-turn prefix.
-   * @param request - source Session and optional event anchor.
+   * @param request - source Session and an optional event anchor: `atSeq`
+   *   cuts at the first completed turn at or after the anchor, while
+   *   `beforeSeq` cuts strictly before the turn containing the anchor (an
+   *   empty prefix when that turn is the Session's first).
    * @returns the new Session identity.
    */
   async fork(request: SessionForkRequest): Promise<SessionForkValue> {
+    if (request.atSeq !== undefined && request.beforeSeq !== undefined) {
+      throw new RemoteError('gateway/bad-request', 'fork accepts atSeq or beforeSeq, not both', {})
+    }
     let atSeq: ReturnType<typeof SessionSeq> | undefined
     try {
       atSeq = request.atSeq === undefined ? undefined : SessionSeq(request.atSeq)
     } catch {
       throw new RemoteError('gateway/bad-request', 'atSeq must be a non-negative safe integer', {})
+    }
+    let beforeSeq: ReturnType<typeof SessionSeq> | undefined
+    try {
+      beforeSeq = request.beforeSeq === undefined ? undefined : SessionSeq(request.beforeSeq)
+    } catch {
+      throw new RemoteError('gateway/bad-request', 'beforeSeq must be a non-negative safe integer', {})
     }
     let observed: SessionObservation
     try {
@@ -224,23 +239,36 @@ export class SessionCommandController {
     }
     using source = observed
     const lastSeq = source.events.at(-1)?.seq ?? -1
-    const anchoredBoundary = atSeq === undefined
-      ? undefined
-      : source.events.find(event => event.type === 'turn/end' && event.seq >= atSeq)
-    const boundary = anchoredBoundary
-      ?? (atSeq === undefined || atSeq > lastSeq
-        ? source.events.findLast(event => event.type === 'turn/end')
-        : undefined)
-    if (boundary === undefined) {
-      throw new RemoteError(
-        'session/fork-unavailable',
-        atSeq !== undefined && atSeq <= lastSeq
-          ? `session "${request.sessionId}" has not completed the turn containing event ${String(atSeq)}`
-          : `session "${request.sessionId}" has no completed turn to fork from`,
-        { sessionId: request.sessionId },
-      )
+    let boundary: SessionEvent | undefined
+    if (beforeSeq !== undefined) {
+      // The turn containing the anchor: the last turn/start at or before it.
+      const anchorTurnStart = source.events.findLast(event => event.type === 'turn/start' && event.seq <= beforeSeq)
+      boundary = anchorTurnStart === undefined
+        ? undefined
+        : source.events.findLast(event => event.type === 'turn/end' && event.seq < anchorTurnStart.seq)
+      // A missing boundary is an empty prefix, not an error: cutting before
+      // the Session's first turn forks an empty child.
+    } else {
+      const anchoredBoundary = atSeq === undefined
+        ? undefined
+        : source.events.find(event => event.type === 'turn/end' && event.seq >= atSeq)
+      boundary = anchoredBoundary
+        ?? (atSeq === undefined || atSeq > lastSeq
+          ? source.events.findLast(event => event.type === 'turn/end')
+          : undefined)
+      if (boundary === undefined) {
+        throw new RemoteError(
+          'session/fork-unavailable',
+          atSeq !== undefined && atSeq <= lastSeq
+            ? `session "${request.sessionId}" has not completed the turn containing event ${String(atSeq)}`
+            : `session "${request.sessionId}" has no completed turn to fork from`,
+          { sessionId: request.sessionId },
+        )
+      }
     }
-    let cut = SessionLogOffset(boundary.seq + 1)
+    let cut = boundary === undefined
+      ? SessionLogOffset(0)
+      : SessionLogOffset(boundary.seq + 1)
     while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') {
       cut = SessionLogOffset(cut + 1)
     }
@@ -292,6 +320,72 @@ export class SessionCommandController {
       }
     }
     return { sessionId: childId }
+  }
+
+  /**
+   * Permanently remove one ordinary Session: dispose its live Agent when
+   * idle, detach it from its Workspace, and delete its durable log.
+   * @param request - the Session to remove.
+   * @returns acknowledgement of the removal.
+   */
+  async remove(request: SessionRemoveRequest): Promise<SessionRemoveValue> {
+    const sessionId = request.sessionId
+    let header: SessionHeader
+    try {
+      header = (await inspectApiSession(this.ctx, sessionId)).meta
+    } catch (error) {
+      if (error instanceof ApiSessionNotFound) {
+        throw new RemoteError('session/not-found', `session "${sessionId}" not found`, { sessionId })
+      }
+      throw new RemoteError(
+        'gateway/internal',
+        `remove source unavailable for session "${sessionId}": ${String(error)}`,
+        {},
+      )
+    }
+    const agent = this.ctx.agents.get(sessionId)
+    if (hasApiSessionSubagentOwner(this.ctx, { header }, agent)) {
+      throw apiSessionSubagentOwnershipError(sessionId)
+    }
+    if (agent !== undefined && agent.status === 'running') {
+      throw new RemoteError(
+        'session/agent-busy',
+        `session "${sessionId}" is running; wait for it to finish before removing it`,
+        { reason: 'running' },
+      )
+    }
+    const disposed = await this.agents.disposeAgent(sessionId)
+    const workspace = this.ctx.workspaceRegistry.list()
+      .find(candidate => candidate.sessionIds.includes(sessionId))
+    if (workspace !== undefined) {
+      try {
+        await workspace.detachSession(sessionId)
+      } catch (error) {
+        throw new RemoteError(
+          'gateway/internal',
+          `failed to detach session "${sessionId}" from workspace "${workspace.id}": ${String(error)}`,
+          {},
+        )
+      }
+    }
+    try {
+      await this.ctx.sessionPersistence.delete(sessionId)
+    } catch (error) {
+      if (error instanceof SessionPersistenceNotFoundError) {
+        throw new RemoteError('session/not-found', `session "${sessionId}" not found`, { sessionId })
+      }
+      throw new RemoteError(
+        'gateway/internal',
+        `failed to remove session "${sessionId}": ${String(error)}`,
+        {},
+      )
+    }
+    if (!disposed) {
+      // The cold path has no Agent whose disposal would publish
+      // session/disposed: clients must learn of the removal directly.
+      this.ctx.emit('api-session/removed', sessionId)
+    }
+    return { removed: true }
   }
 
   /**

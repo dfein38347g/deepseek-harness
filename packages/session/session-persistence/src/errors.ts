@@ -18,6 +18,15 @@ export class SessionPersistenceNotFoundError extends Error {
   }
 }
 
+/** `delete` targeted a session this instance still tracks with a live handle or write claim. */
+export class SessionPersistenceActiveHandleError extends Error {
+  /** @param sessionId - the session whose open handle must close before deletion. */
+  constructor(readonly sessionId: SessionId) {
+    super(`session "${sessionId}" still has an active handle; close it before deleting`)
+    this.name = 'SessionPersistenceActiveHandleError'
+  }
+}
+
 /** `create` targeted a Session identity that already exists in this backend. */
 export class SessionAlreadyExistsError extends Error {
   /** @param sessionId - the occupied durable Session identity. */

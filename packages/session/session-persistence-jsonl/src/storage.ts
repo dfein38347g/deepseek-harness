@@ -458,6 +458,19 @@ export class JsonlBackendTracker {
   }
 
   /**
+   * Whether this instance still tracks the session with a live handle or an
+   * in-flight write claim — the guard a destructive backend operation runs
+   * before touching the session's artifacts.
+   * @param id - the session to test.
+   * @returns true while any open handle or write claim references the id.
+   */
+  hasActive(id: SessionId): boolean {
+    if (this.writers.has(id) || this.pending.has(id)) return true
+    for (const handle of this.openHandles) if (handle.id === id) return true
+    return false
+  }
+
+  /**
    * Iterate the pending sessions for listing.
    * @returns the pending entries, keyed by session id.
    */

@@ -198,7 +198,7 @@ export class TestSessions implements ISessions {
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
     method: 'create' | 'open' | 'openSubagent' | 'setSubagentCatalogOpen' | 'refreshSubagents'
-      | 'clear' | 'refresh' | 'search' | 'fork'
+      | 'clear' | 'refresh' | 'search' | 'fork' | 'remove' | 'rollback'
     args: unknown[]
   }[] = []
 
@@ -512,8 +512,19 @@ export class TestSessions implements ISessions {
    * @param opts - source session id, optional cut anchor, and client title policy.
    * @returns the source id (no child record is created).
    */
-  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId> {
+  fork(opts: { sessionId: SessionId; atSeq?: number; beforeSeq?: number; increaseTitle?: boolean }): Promise<SessionId> {
     this.calls.push({ method: 'fork', args: [opts] })
+    return Promise.resolve(opts.sessionId)
+  }
+
+  /**
+   * Recorded rollback stub: no child materializes (benches asserting the full
+   * rollback flow drive the production service; this face only proves the call).
+   * @param opts - source session id and the anchored event seq.
+   * @returns the source id (no child record is created).
+   */
+  rollback(opts: { sessionId: SessionId; atSeq: number }): Promise<SessionId> {
+    this.calls.push({ method: 'rollback', args: [opts] })
     return Promise.resolve(opts.sessionId)
   }
 

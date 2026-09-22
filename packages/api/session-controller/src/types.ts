@@ -300,12 +300,33 @@ export interface SessionRenameValue {
 /** Session fork request. */
 export interface SessionForkRequest {
   readonly sessionId: SessionId
+  /**
+   * Anchor the cut at the first completed turn at or after this event seq.
+   * Mutually exclusive with `beforeSeq`.
+   */
   readonly atSeq?: number
+  /**
+   * Cut strictly before the turn containing this event seq: the child keeps
+   * every completed turn that ends before that turn opens, and an empty
+   * prefix when the turn is the session's first. Mutually exclusive with
+   * `atSeq`.
+   */
+  readonly beforeSeq?: number
 }
 
 /** Identity of a newly forked Session. */
 export interface SessionForkValue {
   readonly sessionId: SessionId
+}
+
+/** Session removal request. */
+export interface SessionRemoveRequest {
+  readonly sessionId: SessionId
+}
+
+/** Receipt after one ordinary Session is removed. */
+export interface SessionRemoveValue {
+  readonly removed: true
 }
 
 /** Session prompt request. */

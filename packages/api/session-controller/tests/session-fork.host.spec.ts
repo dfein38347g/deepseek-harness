@@ -302,3 +302,83 @@ describe('sessions.fork', () => {
     await ctx.fiber.dispose()
   })
 })
+
+describe('sessions.fork beforeSeq', () => {
+  it('cuts strictly before the turn containing the anchor', async () => {
+    const ctx = await composed()
+    const source = liveAgent(ctx, 'session-before', 2)
+    // turn 2's user message sits at seq 4 (turn 1: 0,1,2; turn 2: 3,4,5).
+    const response = await remote(ctx).fork(request({ sessionId: source.id, beforeSeq: 4 }))
+    expect(response.ok).toBe(true)
+    if (!response.ok) return
+    expect(ctx.sessions.get(response.value.sessionId)?.snapshotEvents().map(event => event.type)).toEqual([
+      'turn/start', 'user/message', 'turn/end', 'session/end-seed',
+    ])
+    await ctx.fiber.dispose()
+  })
+
+  it('forks an empty prefix when the anchor is in the first turn', async () => {
+    const ctx = await composed()
+    const source = liveAgent(ctx, 'session-first', 2)
+    // turn 1's user message sits at seq 1; cutting before its turn is empty.
+    const response = await remote(ctx).fork(request({ sessionId: source.id, beforeSeq: 1 }))
+    expect(response.ok).toBe(true)
+    if (!response.ok) return
+    const child = ctx.sessions.get(response.value.sessionId)
+    expect(child?.snapshotEvents().map(event => event.type)).toEqual(['session/end-seed'])
+    await ctx.fiber.dispose()
+  })
+
+  it('rejects atSeq and beforeSeq together before creating a Session', async () => {
+    const ctx = await composed()
+    const source = liveAgent(ctx, 'session-both', 1)
+    const response = await remote(ctx).fork(request({ sessionId: source.id, atSeq: 1, beforeSeq: 1 }))
+    expect(response).toMatchObject({ ok: false, error: { code: 'gateway/bad-request' } })
+    expect(ctx.sessions.list().filter(session => session.id !== source.id)).toEqual([])
+    await ctx.fiber.dispose()
+  })
+})
+
+describe('sessions.remove', () => {
+  const persistence = (deleted: SessionId[]) => ({
+    // Cold-path reads report absence so inspectApiSession maps to not-found.
+    stat: async () => undefined,
+    delete: async (id: SessionId) => { deleted.push(id) },
+  }) as never
+
+  it('removes an idle session and deletes its durable log', async () => {
+    const ctx = await composed()
+    const deleted: SessionId[] = []
+    ctx.provide('sessionPersistence', persistence(deleted))
+    const source = liveAgent(ctx, 'session-remove', 1)
+    const response = await remote(ctx).remove(request({ sessionId: source.id }))
+    expect(response.ok).toBe(true)
+    if (response.ok) expect(response.value).toEqual({ removed: true })
+    expect(deleted).toEqual([source.id])
+    await ctx.fiber.dispose()
+  })
+
+  it('refuses to remove a running session', async () => {
+    const ctx = await composed()
+    const deleted: SessionId[] = []
+    ctx.provide('sessionPersistence', persistence(deleted))
+    const source = liveAgent(ctx, 'session-running', 1)
+    const agent = ctx.agents.get(source.id)
+    if (agent === undefined) throw new Error('running agent missing')
+    Object.assign(agent, { status: 'running' })
+    const response = await remote(ctx).remove(request({ sessionId: source.id }))
+    expect(response).toMatchObject({ ok: false, error: { code: 'session/agent-busy' } })
+    expect(deleted).toEqual([])
+    await ctx.fiber.dispose()
+  })
+
+  it('reports not-found for a missing session', async () => {
+    const ctx = await composed()
+    const deleted: SessionId[] = []
+    ctx.provide('sessionPersistence', persistence(deleted))
+    const response = await remote(ctx).remove(request({ sessionId: sid('session-missing') }))
+    expect(response).toMatchObject({ ok: false, error: { code: 'session/not-found' } })
+    expect(deleted).toEqual([])
+    await ctx.fiber.dispose()
+  })
+})

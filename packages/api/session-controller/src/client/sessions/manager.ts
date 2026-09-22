@@ -590,16 +590,19 @@ export class SessionManager {
    * child carries the source's history, so it is never blank; lineage rides
    * parentSessionId so the list nests it under its source. A child published
    * before Workspace attachment fails is also reconciled into the list.
-   * @param opts - source session and the optional seq anchoring the cut.
+   * @param opts - source session and the optional seq anchoring the cut
+   *   (`atSeq` cuts at the first completed turn at or after it; `beforeSeq`
+   *   cuts strictly before the turn containing it).
    * @returns the fork result (the child session id).
    */
   async fork(
-    opts: { sessionId: SessionId; atSeq?: SessionSeq },
+    opts: { sessionId: SessionId; atSeq?: SessionSeq; beforeSeq?: SessionSeq },
   ): Promise<RemoteResult<{ sessionId: SessionId }>> {
     const source = this.summaries.find(s => s.sessionId === opts.sessionId)
     const result = await this.remote.session.fork({
       sessionId: opts.sessionId,
       ...opts.atSeq === undefined ? {} : { atSeq: opts.atSeq },
+      ...opts.beforeSeq === undefined ? {} : { beforeSeq: opts.beforeSeq },
     })
     const childId = result.ok
       ? result.value.sessionId
@@ -611,6 +614,19 @@ export class SessionManager {
         ...(source?.cwd !== undefined ? { cwd: source.cwd } : {}),
       } })
     }
+    return result
+  }
+
+  /**
+   * Contract session.remove. The `api-session/removed` relay applies the
+   * list mutation; the local summary is dropped eagerly so a slow relay
+   * never shows the removed session alongside its rollback child.
+   * @param sessionId - the session to remove.
+   * @returns the removal result.
+   */
+  async remove(sessionId: SessionId): Promise<RemoteResult<{ removed: true }>> {
+    const result = await this.remote.session.remove({ sessionId })
+    if (result.ok) this.recordMutation({ kind: 'remove', sessionId })
     return result
   }
 

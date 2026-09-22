@@ -87,14 +87,34 @@ export interface ISessions {
   /**
    * Fork a session from a completed-turn prefix of the source; on resolution
    * the child is in the list store and `open()` can target it.
-   * @param opts - source session id, the optional event seq anchoring the
-   *   cut (the boundary is the first turn/end at or after it; an in-log
-   *   anchor in an open turn is unavailable rather than clipped backward),
-   *   and whether to increment an inherited durable title before resolving.
+   * @param opts - source session id, an optional event seq anchoring the cut
+   *   (`atSeq`: the boundary is the first turn/end at or after it; an in-log
+   *   anchor in an open turn is unavailable rather than clipped backward —
+   *   `beforeSeq`: the cut falls strictly before the turn containing it, an
+   *   empty prefix when that turn is the source's first), and whether to
+   *   increment an inherited durable title before resolving.
    * @returns the child session id.
    * @throws when the fork fails, or when a requested child-title rename fails after creation.
    */
-  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
+  fork(opts: { sessionId: SessionId; atSeq?: number; beforeSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
+  /**
+   * Permanently remove one ordinary session on the Host: its idle Agent is
+   * disposed, its Workspace link detached, and its durable log deleted.
+   * @param sessionId - the session to remove.
+   * @throws when the removal fails.
+   */
+  remove(sessionId: SessionId): Promise<void>
+  /**
+   * Roll the source session back to the prefix strictly before the turn
+   * containing the anchor: fork that prefix, select the child, and delete the
+   * source. The child keeps the source's durable title.
+   * @param opts - source session id and the anchored event seq (the user
+   *   message the conversation is rolled back past).
+   * @returns the child session id, now selected.
+   * @throws when the fork fails (nothing removed) or the removal fails (both
+   *   sessions remain, the child selected).
+   */
+  rollback(opts: { sessionId: SessionId; atSeq: number }): Promise<SessionId>
   /**
    * Resolve an Agent-scoped context view (use-and-discard).
    * @param id - session id.

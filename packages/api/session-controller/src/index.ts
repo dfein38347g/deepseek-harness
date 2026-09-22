@@ -45,6 +45,8 @@ import type {
   SessionPageRequest,
   SessionPromptRequest,
   SessionPromptValue,
+  SessionRemoveRequest,
+  SessionRemoveValue,
   SessionRenameRequest,
   SessionRenameValue,
   SessionSearchRequest,
@@ -335,6 +337,17 @@ export class SessionController extends TypertRemoteService {
   @Remote('fork')
   fork(request: SessionForkRequest): Promise<SessionForkValue> {
     return this.commands.fork(request)
+  }
+
+  /**
+   * Permanently remove one ordinary Session: dispose its idle Agent, detach
+   * it from its Workspace, and delete its durable log.
+   * @param request - the Session to remove.
+   * @returns acknowledgement of the removal.
+   */
+  @Remote('remove')
+  remove(request: SessionRemoveRequest): Promise<SessionRemoveValue> {
+    return this.commands.remove(request)
   }
 
   /**

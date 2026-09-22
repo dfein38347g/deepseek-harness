@@ -181,6 +181,11 @@ class TestPersistence extends SessionPersistence {
     })
   }
 
+  delete(id: SessionIdType): Promise<void> {
+    if (TestPersistence.entries.delete(id) === false) return Promise.reject(new SessionPersistenceNotFoundError(id))
+    return Promise.resolve()
+  }
+
   async list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]> {
     TestPersistence.listSignals.push(options?.signal)
     TestPersistence.listStarted?.()

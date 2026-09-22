@@ -85,6 +85,16 @@ export interface ChatNodeOwnerProps {
   inspectCall: (callId: ToolCallId) => void
   forkAt: (seq: number) => void
   /**
+   * Roll the session back to the prefix strictly before the turn containing
+   * this event, then prefill the composer with the message text.
+   */
+  rollbackAt: (seq: number, text: string) => void
+  /**
+   * Whether the owning session is mid-turn; gates the rollback action so it
+   * reads unavailable while the agent is running.
+   */
+  sessionRunning?: boolean | undefined
+  /**
    * Session-authorized image loader, down-threaded from the Chat view so a
    * chat-node renderer can render the attachment presentation slot directly
    * with only the durable references plus this loader, instead of receiving a
@@ -152,6 +162,11 @@ export interface ChatViewInjected {
     read: () => ChatScrollPosition | null
   }
   forkAt: (seq: number) => void
+  /**
+   * Roll the session back to the prefix strictly before the turn containing
+   * the anchored event, then prefill the composer with the message text.
+   */
+  rollbackAt: (seq: number, text: string) => void
   fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined
 }
 

@@ -28,6 +28,7 @@ export {
   SessionFormatUnsupportedError,
   SessionHandleClosedError,
   SessionOwnershipLostError,
+  SessionPersistenceActiveHandleError,
   SessionPersistenceCorruptionError,
   SessionPersistenceNotFoundError,
   SessionReadOnlyError,
@@ -103,6 +104,12 @@ export interface SessionPersistenceStatOptions {
 /** Options for {@link SessionPersistence.list}. */
 export interface SessionPersistenceListOptions {
   /** Optional cancellation for backend listing work. */
+  readonly signal?: AbortSignal
+}
+
+/** Options for {@link SessionPersistence.delete}. */
+export interface SessionPersistenceDeleteOptions {
+  /** Optional cancellation observed before backend work starts. */
   readonly signal?: AbortSignal
 }
 
@@ -196,6 +203,25 @@ export abstract class SessionPersistence extends Service {
    * @returns one snapshot per stored session.
    */
   abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+  /**
+   * Permanently remove a stored session and every artifact backing it.
+   *
+   * Deletion is the inverse of `create`: after it resolves, `stat`/`list`/
+   * `open` report the session as absent. Backends must refuse while this
+   * instance still tracks the session with a live handle or an in-flight
+   * write claim, and must not disturb a session whose write ownership another
+   * process holds. A created-but-unmaterialized session has no durable
+   * artifact; refusing it keeps the no-footprint guarantee intact.
+   * @param id - the stored session to remove.
+   * @param options - optional cancellation.
+   * @throws {SessionPersistenceNotFoundError} when the session does not exist.
+   * @throws {SessionPersistenceActiveHandleError} when a live handle or write
+   *   claim for the session is still open on this instance.
+   * @throws {SessionAlreadyOwnedError} when another process holds the session's
+   *   write ownership.
+   */
+  abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<void>
 }
 
 export default SessionPersistence
