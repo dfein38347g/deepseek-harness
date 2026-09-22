@@ -165,13 +165,14 @@ export function apply(ctx: Context): void {
           rollbackAt: (seq, text) => {
             ctx.sessions.rollback({ sessionId, atSeq: seq })
               .then((childId) => {
-                // Re-seed the composer with the rolled-back message so it can be
-                // re-sent, mirroring the branch-then-edit affordance.
-                const scope = ctx.sessions.scope(childId)
-                if (scope === undefined) return
-                const conversation = scope.get('conversation')
-                if (conversation === undefined) return
-                conversation.input.for(scope).setDraft(text)
+                // Re-seed the child's composer with the rolled-back message so it
+                // can be re-sent, mirroring the branch-then-edit affordance.
+                // Resolve the child's input facade through the scope-addressed
+                // conversation service (the Service tracker rebinds the caller
+                // scope; a raw scope.get would not).
+                const childScope = ctx.sessions.scope(childId)
+                if (childScope === undefined) return
+                ctx.conversation.input.for(childScope).setDraft(text)
               })
               .catch(() => {
                 // Fork or removal failure leaves the current view unchanged.
