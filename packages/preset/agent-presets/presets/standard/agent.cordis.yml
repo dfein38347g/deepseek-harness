@@ -151,6 +151,15 @@
   config:
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # Summarization rides the bigchat selector on the 0.3 llama-swap
+        # (whichever large chat model the warm router has loaded) instead of
+        # inheriting the conversation's main model (2026-10-05, machine-local
+        # overlay). provider + model are a paired route on the truenas
+        # provider; the row is reconciled into the provider's models[] by
+        # local-model-sync at boot.
+        summarizationProvider: truenas
+        summarizationModel: bigchat
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
